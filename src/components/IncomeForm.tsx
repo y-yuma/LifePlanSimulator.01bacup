@@ -484,7 +484,7 @@ export function IncomeForm() {
           type: 'income',
           category: 'income', // デフォルトカテゴリ
           amounts: {},
-          investmentRatio: parameters.investmentRatio || 10, // デフォルト投資割合
+          investmentRatio: 0, // デフォルト投資割合
           maxInvestmentAmount: parameters.maxInvestmentAmount || 100, // デフォルト最大投資額
         },
       ],

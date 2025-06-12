@@ -91,21 +91,16 @@ const LoanCalculationModal: React.FC<LoanCalculationModalProps> = ({
       };
     } else {
       // 元金均等返済
-      const monthlyPrincipal = borrowAmount / totalPayments;
-      let totalInterest = 0;
-      let remainingBalance = borrowAmount;
+      const principalPayment = borrowAmount / totalPayments;
+      const firstInterestPayment = borrowAmount * monthlyRate;
+      const firstMonthlyPayment = principalPayment + firstInterestPayment;
       
-      for (let i = 0; i < totalPayments; i++) {
-        const monthlyInterest = remainingBalance * monthlyRate;
-        totalInterest += monthlyInterest;
-        remainingBalance -= monthlyPrincipal;
-      }
-      
-      const firstMonthPayment = monthlyPrincipal + (borrowAmount * monthlyRate);
+      const totalInterest = borrowAmount * monthlyRate * (totalPayments + 1) / 2;
+      const totalPayment = borrowAmount + totalInterest;
       
       return {
-        monthlyPayment: Math.round(firstMonthPayment * 10) / 10,
-        totalPayment: Math.round((borrowAmount + totalInterest) * 10) / 10,
+        monthlyPayment: Math.round(firstMonthlyPayment * 10) / 10,
+        totalPayment: Math.round(totalPayment * 10) / 10,
         totalInterest: Math.round(totalInterest * 10) / 10
       };
     }
@@ -115,89 +110,87 @@ const LoanCalculationModal: React.FC<LoanCalculationModalProps> = ({
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-lg p-6 w-full max-w-lg max-h-[90vh] overflow-y-auto">
+      <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4 max-h-[90vh] overflow-y-auto">
         <div className="flex justify-between items-center mb-4">
-          <h3 className="text-lg font-bold">{modalTitle}</h3>
+          <h3 className="text-lg font-semibold">{modalTitle}</h3>
           <button onClick={onClose} className="text-gray-500 hover:text-gray-700">
             <X className="h-5 w-5" />
           </button>
         </div>
 
         <div className="space-y-4">
-          <div className="space-y-2">
-            <label className="text-sm font-medium">借入額（万円）</label>
+          {/* 借入額 */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              借入額（万円）
+            </label>
             <input
               type="number"
+              min="0"
               value={settings.borrowAmount}
-              onChange={(e) => setSettings({...settings, borrowAmount: Number(e.target.value)})}
-              className="w-full rounded-md border border-gray-200 px-3 py-2"
+              onChange={(e) => setSettings(prev => ({ ...prev, borrowAmount: Number(e.target.value) }))}
+              className="w-full rounded-md border border-gray-200 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
             />
           </div>
 
-          <div className="space-y-2">
-            <label className="text-sm font-medium">借入開始年</label>
+          {/* 開始年 */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              借入開始年
+            </label>
             <select
               value={settings.startYear}
-              onChange={(e) => setSettings({...settings, startYear: Number(e.target.value)})}
-              className="w-full rounded-md border border-gray-200 px-3 py-2"
+              onChange={(e) => setSettings(prev => ({ ...prev, startYear: Number(e.target.value) }))}
+              className="w-full rounded-md border border-gray-200 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
             >
-              {years.map((year) => (
-                <option key={year} value={year}>
-                  {year}年
-                </option>
+              {years.map(year => (
+                <option key={year} value={year}>{year}年</option>
               ))}
             </select>
           </div>
 
-          <div className="space-y-2">
-            <label className="text-sm font-medium">年利（%）</label>
+          {/* 金利 */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              年間金利（%）
+            </label>
             <input
               type="number"
-              step="0.1"
               min="0"
-              max="20"
+              step="0.1"
               value={settings.interestRate}
-              onChange={(e) => setSettings({...settings, interestRate: Number(e.target.value)})}
-              className="w-full rounded-md border border-gray-200 px-3 py-2"
+              onChange={(e) => setSettings(prev => ({ ...prev, interestRate: Number(e.target.value) }))}
+              className="w-full rounded-md border border-gray-200 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
             />
           </div>
 
-          <div className="space-y-2">
-            <label className="text-sm font-medium">返済期間（年）</label>
+          {/* 返済期間 */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              返済期間（年）
+            </label>
             <input
               type="number"
               min="1"
-              max="50"
               value={settings.termYears}
-              onChange={(e) => setSettings({...settings, termYears: Number(e.target.value)})}
-              className="w-full rounded-md border border-gray-200 px-3 py-2"
+              onChange={(e) => setSettings(prev => ({ ...prev, termYears: Number(e.target.value) }))}
+              className="w-full rounded-md border border-gray-200 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
             />
           </div>
 
-          <div className="space-y-2">
-            <label className="text-sm font-medium">返済方式</label>
-            <div className="flex space-x-4">
-              <div className="flex items-center">
-                <input
-                  type="radio"
-                  id="equal_payment"
-                  checked={settings.repaymentType === 'equal_payment'}
-                  onChange={() => setSettings({...settings, repaymentType: 'equal_payment'})}
-                  className="mr-2"
-                />
-                <label htmlFor="equal_payment">元利均等</label>
-              </div>
-              <div className="flex items-center">
-                <input
-                  type="radio"
-                  id="equal_principal"
-                  checked={settings.repaymentType === 'equal_principal'}
-                  onChange={() => setSettings({...settings, repaymentType: 'equal_principal'})}
-                  className="mr-2"
-                />
-                <label htmlFor="equal_principal">元金均等</label>
-              </div>
-            </div>
+          {/* 返済方式 */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              返済方式
+            </label>
+            <select
+              value={settings.repaymentType}
+              onChange={(e) => setSettings(prev => ({ ...prev, repaymentType: e.target.value as 'equal_principal' | 'equal_payment' }))}
+              className="w-full rounded-md border border-gray-200 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            >
+              <option value="equal_payment">元利均等返済</option>
+              <option value="equal_principal">元金均等返済</option>
+            </select>
           </div>
 
           {/* プレビュー表示 */}
@@ -254,6 +247,14 @@ export function AssetsLiabilitiesForm() {
     (_, i) => basicInfo.startYear + i
   );
 
+  const handleBack = () => {
+    setCurrentStep(3);
+  };
+
+  const handleNext = () => {
+    setCurrentStep(5);
+  };
+
   const handleAssetAmountChange = (
     section: 'personal' | 'corporate',
     itemId: string,
@@ -309,222 +310,6 @@ export function AssetsLiabilitiesForm() {
     syncCashFlowFromFormData();
   };
 
-  // 自動計算モーダルを開く
-  const openLoanCalculationModal = (itemId: string, section: 'personal' | 'corporate') => {
-    setCurrentLiabilityId(itemId);
-    setCurrentSection(section);
-    setLoanModalOpen(true);
-  };
-
-  // 自動計算を実行
-  const applyLoanCalculation = (settings: LoanCalculationSettings) => {
-    if (!currentLiabilityId) return;
-
-    const { borrowAmount, startYear, interestRate, termYears, repaymentType } = settings;
-
-    // 現金・預金項目を取得
-    const cashAsset = assetData[currentSection].find(asset => 
-      asset.type === 'cash' || asset.name.includes('現金')
-    );
-
-    // 返済スケジュールを計算
-    const schedule = calculateLoanSchedule(borrowAmount, interestRate, termYears, repaymentType);
-
-    // 負債データを更新
-    const updatedLiabilityData = {
-      ...liabilityData,
-      [currentSection]: liabilityData[currentSection].map(item => {
-        if (item.id === currentLiabilityId) {
-          const newAmounts: { [year: number]: number } = {};
-          
-          // 借入年に元本を設定
-          newAmounts[startYear] = borrowAmount;
-          
-          // 各年の残高を設定
-          schedule.forEach((payment, index) => {
-            const year = startYear + index + 1;
-            newAmounts[year] = payment.remainingBalance;
-          });
-
-          return {
-            ...item,
-            amounts: newAmounts,
-            startYear,
-            interestRate,
-            termYears,
-            repaymentType,
-            autoCalculate: true,
-            originalAmount: borrowAmount,
-            _isCalculated: true,
-            _calculationHash: `${startYear}_${termYears}_${interestRate}_${repaymentType}_${borrowAmount}`
-          };
-        }
-        return item;
-      })
-    };
-
-    // 現金・預金を更新（借入時に増加）
-    let updatedAssetData = assetData;
-    if (cashAsset) {
-      updatedAssetData = {
-        ...assetData,
-        [currentSection]: assetData[currentSection].map(item => {
-          if (item.id === cashAsset.id) {
-            return {
-              ...item,
-              amounts: {
-                ...item.amounts,
-                [startYear]: (item.amounts[startYear] || 0) + borrowAmount
-              }
-            };
-          }
-          return item;
-        })
-      };
-    }
-
-    setLiabilityData(updatedLiabilityData);
-    setAssetData(updatedAssetData);
-    setLoanModalOpen(false);
-    syncCashFlowFromFormData();
-  };
-
-  // 自動計算を取り消し
-  const cancelLoanCalculation = (section: 'personal' | 'corporate', itemId: string) => {
-    const item = liabilityData[section].find(i => i.id === itemId);
-    if (!item || !item.autoCalculate || !item.startYear || !item.originalAmount) return;
-
-    // 現金・預金項目を取得
-    const cashAsset = assetData[section].find(asset => 
-      asset.type === 'cash' || asset.name.includes('現金')
-    );
-
-    // 負債データをリセット
-    const updatedLiabilityData = {
-      ...liabilityData,
-      [section]: liabilityData[section].map(liability => {
-        if (liability.id === itemId) {
-          return {
-            ...liability,
-            amounts: {}, // 全ての年度データをクリア
-            autoCalculate: false,
-            startYear: undefined,
-            originalAmount: undefined,
-            _isCalculated: false,
-            _calculationHash: undefined
-          };
-        }
-        return liability;
-      })
-    };
-
-    // 現金・預金から借入額を減額
-    let updatedAssetData = assetData;
-    if (cashAsset && item.startYear) {
-      updatedAssetData = {
-        ...assetData,
-        [section]: assetData[section].map(asset => {
-          if (asset.id === cashAsset.id) {
-            return {
-              ...asset,
-              amounts: {
-                ...asset.amounts,
-                [item.startYear!]: Math.max(0, (asset.amounts[item.startYear!] || 0) - item.originalAmount!)
-              }
-            };
-          }
-          return asset;
-        })
-      };
-    }
-
-    setLiabilityData(updatedLiabilityData);
-    setAssetData(updatedAssetData);
-    syncCashFlowFromFormData();
-  };
-
-  // ローン返済スケジュール計算関数
-  const calculateLoanSchedule = (
-    borrowAmount: number,
-    interestRate: number,
-    termYears: number,
-    repaymentType: 'equal_principal' | 'equal_payment'
-  ) => {
-    const schedule: Array<{
-      year: number;
-      payment: number;
-      principal: number;
-      interest: number;
-      remainingBalance: number;
-    }> = [];
-
-    if (interestRate === 0) {
-      // 金利0%の場合：元金均等返済
-      const yearlyPrincipalPayment = Math.round((borrowAmount / termYears) * 10) / 10;
-      
-      for (let year = 1; year <= termYears; year++) {
-        const remainingBalance = Math.max(0, Math.round((borrowAmount - (yearlyPrincipalPayment * year)) * 10) / 10);
-        
-        schedule.push({
-          year,
-          payment: yearlyPrincipalPayment,
-          principal: yearlyPrincipalPayment,
-          interest: 0,
-          remainingBalance
-        });
-      }
-    } else {
-      if (repaymentType === 'equal_payment') {
-        // 元利均等返済
-        const monthlyRate = interestRate / 100 / 12;
-        const totalPayments = termYears * 12;
-        
-        const monthlyPayment = borrowAmount * 
-          (monthlyRate * Math.pow(1 + monthlyRate, totalPayments)) / 
-          (Math.pow(1 + monthlyRate, totalPayments) - 1);
-        
-        const yearlyPayment = Math.round(monthlyPayment * 12 * 10) / 10;
-        let remainingBalance = borrowAmount;
-        
-        for (let year = 1; year <= termYears; year++) {
-          const yearlyInterest = Math.round(remainingBalance * (interestRate / 100) * 10) / 10;
-          const principalPayment = Math.min(yearlyPayment - yearlyInterest, remainingBalance);
-          
-          remainingBalance = Math.max(0, remainingBalance - principalPayment);
-          
-          schedule.push({
-            year,
-            payment: yearlyPayment,
-            principal: Math.round(principalPayment * 10) / 10,
-            interest: yearlyInterest,
-            remainingBalance: Math.round(remainingBalance * 10) / 10
-          });
-        }
-      } else {
-        // 元金均等返済
-        const yearlyPrincipalPayment = Math.round((borrowAmount / termYears) * 10) / 10;
-        let remainingBalance = borrowAmount;
-        
-        for (let year = 1; year <= termYears; year++) {
-          const yearlyInterest = Math.round(remainingBalance * (interestRate / 100) * 10) / 10;
-          const totalPayment = yearlyPrincipalPayment + yearlyInterest;
-          
-          remainingBalance = Math.max(0, remainingBalance - yearlyPrincipalPayment);
-          
-          schedule.push({
-            year,
-            payment: Math.round(totalPayment * 10) / 10,
-            principal: yearlyPrincipalPayment,
-            interest: yearlyInterest,
-            remainingBalance: Math.round(remainingBalance * 10) / 10
-          });
-        }
-      }
-    }
-
-    return schedule;
-  };
-
   const addAssetItem = (section: 'personal' | 'corporate') => {
     const newId = String(Math.max(...assetData[section].map(i => Number(i.id) || 0), 0) + 1);
     setAssetData({
@@ -538,6 +323,7 @@ export function AssetsLiabilitiesForm() {
           category: 'asset',
           amounts: {},
           isInvestment: false,
+          investmentReturn: 3.0, // デフォルト3%の運用利回り
         },
       ],
     });
@@ -719,6 +505,26 @@ export function AssetsLiabilitiesForm() {
     syncCashFlowFromFormData();
   };
 
+  // 運用利回りを変更する関数を追加
+  const handleInvestmentReturnChange = (
+    section: 'personal' | 'corporate',
+    itemId: string,
+    value: number
+  ) => {
+    setAssetData({
+      ...assetData,
+      [section]: assetData[section].map(item =>
+        item.id === itemId
+          ? {
+              ...item,
+              investmentReturn: value,
+            }
+          : item
+      ),
+    });
+    syncCashFlowFromFormData();
+  };
+
   const renderAssetTable = (section: 'personal' | 'corporate') => {
     const items = assetData[section];
     const title = section === 'personal' ? '個人' : '法人';
@@ -763,18 +569,24 @@ export function AssetsLiabilitiesForm() {
                     チェックを入れると、この資産に運用利回りが適用され、複利で増加していきます。
                   </TermTooltip>
                 </th>
+                <th className="px-4 py-2 text-center text-sm font-medium text-gray-500 w-[100px]">
+                  運用利回り(%)
+                  <TermTooltip term="" width="narrow">
+                    運用資産にチェックが入っている場合の年間利回りです。複利で計算されます。
+                  </TermTooltip>
+                </th>
                 {years.map(year => (
                   <th key={year} className="px-4 py-2 text-right text-sm font-medium text-gray-500 min-w-[95px]">
                     {year}年
                   </th>
                 ))}
-                <th className="px-4 py-2 text-center text-sm font-medium text-gray-500 w-20">
-                  操作
+                <th className="px-4 py-2 text-center text-sm font-medium text-gray-500 w-[60px]">
+                  削除
                 </th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-200 bg-white">
-              {items.map(item => (
+            <tbody className="bg-white divide-y divide-gray-200">
+              {items.map((item) => (
                 <tr key={item.id}>
                   <td className="px-4 py-2 sticky left-0 bg-white">
                     <input
@@ -784,7 +596,7 @@ export function AssetsLiabilitiesForm() {
                       className="w-full rounded-md border border-gray-200 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     />
                   </td>
-                  <td className="px-4 py-2 text-center">
+                  <td className="px-4 py-2">
                     <select
                       value={item.type}
                       onChange={(e) => handleAssetTypeChange(section, item.id, e.target.value as 'cash' | 'investment' | 'property' | 'other')}
@@ -798,7 +610,7 @@ export function AssetsLiabilitiesForm() {
                   </td>
                   <td className="px-4 py-2">
                     <CategorySelect
-                      value={item.category || 'asset'}
+                      value={item.category}
                       onChange={(value) => handleAssetCategoryChange(section, item.id, value)}
                       categories={ASSET_CATEGORIES}
                     />
@@ -809,6 +621,20 @@ export function AssetsLiabilitiesForm() {
                       checked={item.isInvestment}
                       onChange={() => toggleAssetInvestment(section, item.id)}
                       className="h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                    />
+                  </td>
+                  <td className="px-4 py-2">
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.1"
+                      value={item.investmentReturn || 0}
+                      onChange={(e) => handleInvestmentReturnChange(section, item.id, Number(e.target.value))}
+                      disabled={!item.isInvestment}
+                      className={`w-10 text-right rounded-md border border-gray-200 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
+                        !item.isInvestment ? 'bg-gray-100 text-gray-400' : ''
+                      }`}
+                      placeholder="0.0"
                     />
                   </td>
                   {years.map(year => (
@@ -840,7 +666,7 @@ export function AssetsLiabilitiesForm() {
     );
   };
 
-  // 修正版：負債テーブルのレンダリング関数
+  // 負債テーブルのレンダリング関数
   const renderLiabilityTable = (section: 'personal' | 'corporate') => {
     const items = liabilityData[section];
     const title = section === 'personal' ? '個人' : '法人';
@@ -879,10 +705,10 @@ export function AssetsLiabilitiesForm() {
                     負債の分類です。負債/その他から選択できます。
                   </TermTooltip>
                 </th>
-                <th className="px-4 py-2 text-center text-sm font-medium text-gray-500 w-[80px]">
+                <th className="px-4 py-2 text-center text-sm font-medium text-gray-500 w-[100px]">
                   自動計算
                   <TermTooltip term="" width="narrow">
-                    ボタンをクリックすると借入条件を設定して返済スケジュールを自動計算します。
+                    借入条件から返済スケジュールを自動計算します。
                   </TermTooltip>
                 </th>
                 {years.map(year => (
@@ -890,13 +716,13 @@ export function AssetsLiabilitiesForm() {
                     {year}年
                   </th>
                 ))}
-                <th className="px-4 py-2 text-center text-sm font-medium text-gray-500 w-20">
-                  操作
+                <th className="px-4 py-2 text-center text-sm font-medium text-gray-500 w-[60px]">
+                  削除
                 </th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-200 bg-white">
-              {items.map(item => (
+            <tbody className="bg-white divide-y divide-gray-200">
+              {items.map((item) => (
                 <tr key={item.id}>
                   <td className="px-4 py-2 sticky left-0 bg-white">
                     <input
@@ -906,7 +732,7 @@ export function AssetsLiabilitiesForm() {
                       className="w-full rounded-md border border-gray-200 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     />
                   </td>
-                  <td className="px-4 py-2 text-center">
+                  <td className="px-4 py-2">
                     <select
                       value={item.type}
                       onChange={(e) => handleLiabilityTypeChange(section, item.id, e.target.value as 'loan' | 'credit' | 'other')}
@@ -919,32 +745,34 @@ export function AssetsLiabilitiesForm() {
                   </td>
                   <td className="px-4 py-2">
                     <CategorySelect
-                      value={item.category || 'liability'}
+                      value={item.category}
                       onChange={(value) => handleLiabilityCategoryChange(section, item.id, value)}
                       categories={LIABILITY_CATEGORIES}
                     />
                   </td>
                   <td className="px-4 py-2 text-center">
-                    {item.autoCalculate ? (
-                      <button
-                        type="button"
-                        onClick={() => cancelLoanCalculation(section, item.id)}
-                        className="inline-flex items-center px-2 py-1 text-xs bg-red-100 text-red-800 rounded hover:bg-red-200"
-                        title="自動計算を取り消し"
-                      >
-                        <RotateCcw className="h-3 w-3 mr-1" />
-                        <span>取消</span>
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => openLoanCalculationModal(item.id, section)}
-                        className="inline-flex items-center px-2 py-1 text-xs bg-purple-100 text-purple-800 rounded hover:bg-purple-200"
-                      >
-                        <Wand2 className="h-3 w-3 mr-1" />
-                        <span>設定</span>
-                      </button>
-                    )}
+                    <div className="flex flex-col gap-1">
+                      {item.autoCalculate ? (
+                        <button
+                          type="button"
+                          onClick={() => cancelLoanCalculation(section, item.id)}
+                          className="inline-flex items-center px-2 py-1 text-xs bg-red-100 text-red-800 rounded hover:bg-red-200"
+                          title="自動計算を取消"
+                        >
+                          <RotateCcw className="h-3 w-3 mr-1" />
+                          <span>取消</span>
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => openLoanCalculationModal(item.id, section)}
+                          className="inline-flex items-center px-2 py-1 text-xs bg-purple-100 text-purple-800 rounded hover:bg-purple-200"
+                        >
+                          <Wand2 className="h-3 w-3 mr-1" />
+                          <span>設定</span>
+                        </button>
+                      )}
+                    </div>
                   </td>
                   {years.map(year => (
                     <td key={year} className="px-4 py-2">
@@ -952,22 +780,14 @@ export function AssetsLiabilitiesForm() {
                         type="number"
                         value={item.amounts[year] || ''}
                         onChange={(e) => handleLiabilityAmountChange(section, item.id, year, Number(e.target.value))}
+                        disabled={item.autoCalculate && item.startYear && year !== item.startYear}
                         className={`w-full text-right rounded-md border border-gray-200 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
-                          item.autoCalculate && item.startYear && year !== item.startYear ? 'bg-gray-100' : ''
+                          item.autoCalculate && item.startYear && year !== item.startYear 
+                            ? 'bg-gray-100 text-gray-600' 
+                            : ''
                         }`}
                         placeholder="0"
-                        disabled={item.autoCalculate && item.startYear && year !== item.startYear}
                       />
-                      {item.autoCalculate && item.startYear === year && (
-                        <div className="text-xs text-blue-600 mt-1">
-                          借入年
-                        </div>
-                      )}
-                      {item.autoCalculate && item.startYear && year > item.startYear && item.amounts[year] !== undefined && (
-                        <div className="text-xs text-gray-500 mt-1">
-                          自動計算
-                        </div>
-                      )}
                     </td>
                   ))}
                   <td className="px-4 py-2 text-center">
@@ -988,25 +808,171 @@ export function AssetsLiabilitiesForm() {
     );
   };
 
-  const handleNext = () => {
-    syncCashFlowFromFormData();
-    setCurrentStep(5);
+  // ローン計算モーダルを開く
+  const openLoanCalculationModal = (liabilityId: string, section: 'personal' | 'corporate') => {
+    setCurrentLiabilityId(liabilityId);
+    setCurrentSection(section);
+    setLoanModalOpen(true);
   };
 
-  const handleBack = () => {
+  // ローン計算を適用
+  const applyLoanCalculation = (settings: LoanCalculationSettings) => {
+    const { borrowAmount, startYear, interestRate, termYears, repaymentType } = settings;
+    
+    // 返済スケジュールを計算
+    const schedule: { [year: number]: number } = {};
+    
+    // 借入年に借入額を設定
+    schedule[startYear] = borrowAmount;
+    
+    if (interestRate === 0) {
+      // 金利0%の場合、元金均等返済
+      const yearlyPayment = borrowAmount / termYears;
+      for (let i = 1; i <= termYears; i++) {
+        const repaymentYear = startYear + i;
+        if (repaymentYear <= basicInfo.startYear + (basicInfo.deathAge - basicInfo.currentAge)) {
+          schedule[repaymentYear] = -yearlyPayment;
+        }
+      }
+    } else {
+      const monthlyRate = interestRate / 100 / 12;
+      const totalPayments = termYears * 12;
+
+      if (repaymentType === 'equal_payment') {
+        // 元利均等返済
+        const monthlyPayment = borrowAmount * 
+          (monthlyRate * Math.pow(1 + monthlyRate, totalPayments)) / 
+          (Math.pow(1 + monthlyRate, totalPayments) - 1);
+        
+        const yearlyPayment = monthlyPayment * 12;
+        
+        for (let i = 1; i <= termYears; i++) {
+          const repaymentYear = startYear + i;
+          if (repaymentYear <= basicInfo.startYear + (basicInfo.deathAge - basicInfo.currentAge)) {
+            schedule[repaymentYear] = -yearlyPayment;
+          }
+        }
+      } else {
+        // 元金均等返済
+        const monthlyPrincipal = borrowAmount / totalPayments;
+        let remainingBalance = borrowAmount;
+        
+        for (let i = 1; i <= termYears; i++) {
+          const repaymentYear = startYear + i;
+          if (repaymentYear <= basicInfo.startYear + (basicInfo.deathAge - basicInfo.currentAge)) {
+            let yearlyPayment = 0;
+            
+            for (let j = 0; j < 12; j++) {
+              const monthlyInterest = remainingBalance * monthlyRate;
+              const monthlyPayment = monthlyPrincipal + monthlyInterest;
+              yearlyPayment += monthlyPayment;
+              remainingBalance -= monthlyPrincipal;
+            }
+            
+            schedule[repaymentYear] = -yearlyPayment;
+          }
+        }
+      }
+    }
+
+    // 負債データを更新
+    setLiabilityData({
+      ...liabilityData,
+      [currentSection]: liabilityData[currentSection].map(item =>
+        item.id === currentLiabilityId
+          ? {
+              ...item,
+              amounts: schedule,
+              interestRate: interestRate,
+              termYears: termYears,
+              autoCalculate: true,
+              repaymentType: repaymentType,
+              startYear: startYear,
+              borrowAmount: borrowAmount,
+            }
+          : item
+      ),
+    });
+
+    // 現金・預金項目を探して借入時に増額
+    const cashAssetItem = assetData[currentSection].find(item => 
+      item.type === 'cash' || item.name.includes('現金') || item.name.includes('預金')
+    );
+
+    if (cashAssetItem) {
+      setAssetData({
+        ...assetData,
+        [currentSection]: assetData[currentSection].map(item =>
+          item.id === cashAssetItem.id
+            ? {
+                ...item,
+                amounts: {
+                  ...item.amounts,
+                  [startYear]: (item.amounts[startYear] || 0) + borrowAmount,
+                },
+              }
+            : item
+        ),
+      });
+    }
+
     syncCashFlowFromFormData();
-    setCurrentStep(3);
+    setLoanModalOpen(false);
+  };
+
+  // ローン計算を取消
+  const cancelLoanCalculation = (section: 'personal' | 'corporate', liabilityId: string) => {
+    const item = liabilityData[section].find(i => i.id === liabilityId);
+    if (!item || !item.autoCalculate) return;
+
+    // 現金・預金項目から借入額を減額
+    if (item.startYear && item.borrowAmount) {
+      const cashAssetItem = assetData[section].find(asset => 
+        asset.type === 'cash' || asset.name.includes('現金') || asset.name.includes('預金')
+      );
+
+      if (cashAssetItem) {
+        setAssetData({
+          ...assetData,
+          [section]: assetData[section].map(asset =>
+            asset.id === cashAssetItem.id
+              ? {
+                  ...asset,
+                  amounts: {
+                    ...asset.amounts,
+                    [item.startYear!]: Math.max(0, (asset.amounts[item.startYear!] || 0) - item.borrowAmount!),
+                  },
+                }
+              : asset
+          ),
+        });
+      }
+    }
+
+    // 負債データをリセット
+    setLiabilityData({
+      ...liabilityData,
+      [section]: liabilityData[section].map(item =>
+        item.id === liabilityId
+          ? {
+              ...item,
+              amounts: {},
+              interestRate: 0,
+              termYears: 0,
+              autoCalculate: false,
+              repaymentType: 'equal_payment',
+              startYear: undefined,
+              borrowAmount: undefined,
+            }
+          : item
+      ),
+    });
+
+    syncCashFlowFromFormData();
   };
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h2 className="text-xl font-bold">資産・負債情報</h2>
-        <div className="text-sm text-gray-500">
-          ※金額は万円単位で入力してください
-        </div>
-      </div>
-
       <div className="bg-blue-50 p-4 rounded-md mb-4">
         <h3 className="text-md font-medium text-blue-800 mb-2 flex items-center">
           <span>資産・負債情報について</span>
@@ -1031,6 +997,22 @@ export function AssetsLiabilitiesForm() {
             <li>間違えた場合は「取消」ボタンで完全にリセット</li>
           </ol>
           <p><strong>自動処理：</strong>借入時に現金・預金が自動で増加し、各年の返済で現金から返済額が自動で減算されます。</p>
+        </div>
+      </div>
+
+      {/* 運用利回り設定についての説明を追加 */}
+      <div className="bg-green-50 p-4 rounded-md mb-4">
+        <h3 className="text-md font-medium text-green-800 mb-2 flex items-center">
+          <span>運用資産利回り設定について</span>
+        </h3>
+        <div className="text-sm text-green-700 space-y-2">
+          <p><strong>設定方法：</strong></p>
+          <ol className="list-decimal pl-4 space-y-1">
+            <li>運用資産欄にチェックを入れる</li>
+            <li>運用利回り欄に年間の期待利回り（%）を入力</li>
+            <li>各年の資産額を入力</li>
+          </ol>
+          <p><strong>計算方法：</strong>運用資産は毎年、設定した利回りで複利計算されます。</p>
         </div>
       </div>
 

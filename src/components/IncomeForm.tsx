@@ -10,6 +10,16 @@ import { FormulaAccordion } from './common/FormulaAccordion';
 import { FormulaSyntax } from './common/FormulaSyntax';
 import { ContextHelp } from './common/ContextHelp';
 
+// 自動入力設定のインターフェースに上限値を追加
+interface AutofillSettings {
+  initialAmount: number;
+  endAge: number;
+  raiseType: 'percentage' | 'amount';
+  raisePercentage: number;
+  raiseAmount: number;
+  maxAmount?: number; // 上限値を追加
+}
+
 // 自動入力モーダル用のインターフェース
 interface AutofillModalProps {
   isOpen: boolean;
@@ -18,14 +28,6 @@ interface AutofillModalProps {
   initialSettings?: AutofillSettings;
   itemName: string;
   section: 'personal' | 'corporate'; // セクション情報を追加
-}
-
-interface AutofillSettings {
-  initialAmount: number;
-  endAge: number;
-  raiseType: 'percentage' | 'amount';
-  raisePercentage: number;
-  raiseAmount: number;
 }
 
 // 自動入力モーダルコンポーネント
@@ -44,6 +46,7 @@ const AutofillModal: React.FC<AutofillModalProps> = ({
       raiseType: 'percentage', // デフォルトは割合方式
       raisePercentage: 1.0, // デフォルト1.0%
       raiseAmount: 10, // デフォルト10万円
+      maxAmount: undefined, // 上限値のデフォルトは未設定
     }
   );
 
@@ -56,6 +59,7 @@ const AutofillModal: React.FC<AutofillModalProps> = ({
   const raiseTypeLabel = isGivenSalary ? '昇給タイプ' : '増加タイプ';
   const raiseTypePercentLabel = isGivenSalary ? '昇給率（%）' : '増加率（%）';
   const raiseTypeAmountLabel = isGivenSalary ? '昇給額（万円）' : '増加額（万円）';
+  const maxAmountLabel = isGivenSalary ? '年収上限値（万円/年）' : '収入上限値（万円/年）';
   const modalTitle = `${itemName}自動入力設定`;
 
   if (!isOpen) return null;
@@ -141,6 +145,51 @@ const AutofillModal: React.FC<AutofillModalProps> = ({
               <p className="text-xs text-gray-500">毎年の固定増加額</p>
             </div>
           )}
+
+          {/* 上限値設定を追加 */}
+          <div className="space-y-2">
+            <label className="text-sm font-medium flex items-center gap-2">
+              {maxAmountLabel}
+              <TermTooltip term="" width="narrow">
+                収入が増加していく際の上限値を設定します。計算された金額がこの値を超える場合、上限値で制限されます。未設定の場合は制限なしです。
+              </TermTooltip>
+            </label>
+            <div className="flex items-center space-x-2">
+              <input
+                type="checkbox"
+                id="enableMaxAmount"
+                checked={settings.maxAmount !== undefined}
+                onChange={(e) => {
+                  if (e.target.checked) {
+                    setSettings({...settings, maxAmount: 1000}); // デフォルト1000万円
+                  } else {
+                    setSettings({...settings, maxAmount: undefined});
+                  }
+                }}
+                className="rounded"
+              />
+              <label htmlFor="enableMaxAmount" className="text-sm">上限値を設定する</label>
+            </div>
+            {settings.maxAmount !== undefined && (
+              <input
+                type="number"
+                value={settings.maxAmount}
+                onChange={(e) => setSettings({...settings, maxAmount: Number(e.target.value)})}
+                className="w-full rounded-md border border-gray-200 px-3 py-2"
+                placeholder="1000"
+              />
+            )}
+          </div>
+
+          {/* 上限値設定時の説明 */}
+          {settings.maxAmount !== undefined && (
+            <div className="bg-yellow-50 p-3 rounded-md">
+              <p className="text-sm text-yellow-700">
+                <span className="font-medium">上限値制限: </span>
+                計算された金額が{settings.maxAmount}万円を超える年は、{settings.maxAmount}万円で制限されます。
+              </p>
+            </div>
+          )}
         </div>
 
         <div className="flex justify-end space-x-3 mt-6">
@@ -193,6 +242,7 @@ export function IncomeForm() {
         <li><span className="font-bold">年金収入</span>: 国民年金や厚生年金からの給付金</li>
         <li><span className="font-bold">投資割合</span>: 収入のうち、何%を投資に回すかの割合</li>
         <li><span className="font-bold">最大投資額</span>: 年間に投資できる金額の上限(万円)</li>
+        <li><span className="font-bold">収入上限値</span>: 自動入力時に設定する年間収入の最大値(万円)</li>
       </ul>
       
       <h4 className="font-bold text-gray-800">給与計算関連</h4>
@@ -209,6 +259,7 @@ export function IncomeForm() {
         <li><span className="font-bold">終了年齢</span>: その収入が発生する最終年齢</li>
         <li><span className="font-bold">増加率</span>: 毎年の金額が前年に対して増加する割合（%）</li>
         <li><span className="font-bold">増加額</span>: 毎年の金額が前年から増加する固定金額（万円/年）</li>
+        <li><span className="font-bold">上限値</span>: 収入の最大値。計算結果がこの値を超えた場合に制限される（万円/年）</li>
       </ul>
     </div>
   );
@@ -253,11 +304,12 @@ export function IncomeForm() {
         borderColor="border-green-200"
       >
         <FormulaSyntax formula={`n年目の金額 = 初期金額 × (1 + 増加率/100)^(n-1)
+上限値制限後 = min(n年目の金額, 上限値)
 
-例: 初期金額400万円、増加率2%の場合
+例: 初期金額400万円、増加率2%、上限値1000万円の場合
 1年目: 400万円
-2年目: 400 × (1 + 2/100) = 408万円
-3年目: 400 × (1 + 2/100)^2 = 416.16万円`} />
+2年目: min(400 × (1 + 2/100), 1000) = min(408, 1000) = 408万円
+3年目: min(400 × (1 + 2/100)^2, 1000) = min(416.16, 1000) = 416.16万円`} />
       </FormulaAccordion>
 
       <FormulaAccordion 
@@ -267,11 +319,12 @@ export function IncomeForm() {
         borderColor="border-green-200"
       >
         <FormulaSyntax formula={`n年目の金額 = 初期金額 + 増加額 × (n-1)
+上限値制限後 = min(n年目の金額, 上限値)
 
-例: 初期金額400万円、増加額10万円の場合
+例: 初期金額400万円、増加額10万円、上限値1000万円の場合
 1年目: 400万円
-2年目: 400 + 10 = 410万円
-3年目: 400 + 10 × 2 = 420万円`} />
+2年目: min(400 + 10, 1000) = min(410, 1000) = 410万円
+3年目: min(400 + 10 × 2, 1000) = min(420, 1000) = 420万円`} />
       </FormulaAccordion>
 
       <FormulaAccordion 
@@ -304,7 +357,7 @@ export function IncomeForm() {
     setAutofillModalOpen(true);
   };
 
-  // 自動入力設定を適用する
+  // 自動入力設定を適用する（上限値制限機能付き）
   const applyAutofillSettings = (settings: AutofillSettings) => {
     if (!currentItemId) return;
 
@@ -338,6 +391,11 @@ export function IncomeForm() {
         amount = settings.initialAmount + (settings.raiseAmount * index);
       }
       
+      // 上限値制限を適用
+      if (settings.maxAmount !== undefined && amount > settings.maxAmount) {
+        amount = settings.maxAmount;
+      }
+      
       // 小数点以下を切り捨て
       amount = Math.floor(amount);
       
@@ -363,169 +421,111 @@ export function IncomeForm() {
             ...i,
             amounts: {...i.amounts, ...newAmounts},
             _originalAmounts: currentSection === 'personal' && isNetIncomeTarget(i.name) 
-              ? {...i._originalAmounts, ...newOriginalAmounts} 
-              : undefined
+              ? {...i._originalAmounts, ...newOriginalAmounts}
+              : i._originalAmounts
           };
         }
         return i;
       })
     });
     
-    // モーダルを閉じる
     setAutofillModalOpen(false);
   };
 
-  // 入力フォーカスが外れたときのハンドラ - 手取り計算を行う
-  const handleAmountBlur = (
-    section: 'personal' | 'corporate',
-    itemId: string,
-    year: number,
-    value: number
-  ) => {
-    if (section === 'personal') {
-      const item = incomeData[section].find(i => i.id === itemId);
-      
-      // 給与収入で会社員または厚生年金ありのパートの場合のみ手取り計算を行う
-      if (item && isNetIncomeTarget(item.name)) {
-        // 職業を判断
-        const occupation = item.name === '給与収入' ? basicInfo.occupation : basicInfo.spouseInfo?.occupation;
-        
-        // 手取り計算
-        const netResult = calculateNetIncome(value, occupation);
-        const netIncome = netResult.netIncome;
-        
-        // 額面は_originalAmountsに保存、表示用のamountsは手取り額に更新
-        setIncomeData({
-          ...incomeData,
-          [section]: incomeData[section].map(i => {
-            if (i.id === itemId) {
-              return {
-                ...i,
-                _originalAmounts: { ...(i._originalAmounts || {}), [year]: value },
-                amounts: { ...(i.amounts || {}), [year]: netIncome }
-              };
-            }
-            return i;
-          })
-        });
-      }
-    }
-  };
-
-  const handleAmountChange = (
-    section: 'personal' | 'corporate',
-    itemId: string,
-    year: number,
-    value: number
-  ) => {
-    setIncomeData({
-      ...incomeData,
-      [section]: incomeData[section].map(item =>
-        item.id === itemId
-          ? {
-              ...item,
-              amounts: {
-                ...item.amounts,
-                [year]: value,
-              },
-            }
-          : item
-      ),
-    });
-  };
-
-  // 投資割合の変更を処理する関数
-  const handleInvestmentRatioChange = (
-    section: 'personal' | 'corporate', 
-    itemId: string, 
-    value: number
-  ) => {
-    setIncomeData({
-      ...incomeData,
-      [section]: incomeData[section].map(item =>
-        item.id === itemId
-          ? {
-              ...item,
-              investmentRatio: value,
-            }
-          : item
-      ),
-    });
-  };
-
-  // 最大投資額の変更を処理する関数
-  const handleMaxInvestmentAmountChange = (
-    section: 'personal' | 'corporate', 
-    itemId: string, 
-    value: number
-  ) => {
-    setIncomeData({
-      ...incomeData,
-      [section]: incomeData[section].map(item =>
-        item.id === itemId
-          ? {
-              ...item,
-              maxInvestmentAmount: value,
-            }
-          : item
-      ),
-    });
-  };
-
   const addIncomeItem = (section: 'personal' | 'corporate') => {
-    const newId = String(Math.max(...incomeData[section].map(i => Number(i.id)), 0) + 1);
+    const newItem = {
+      id: `${section}_${Date.now()}`,
+      name: '',
+      category: '',
+      amounts: {} as {[year: number]: number},
+      investmentPercentage: 0,
+      maxInvestmentAmount: 0,
+      _originalAmounts: {} as {[year: number]: number}
+    };
+
     setIncomeData({
       ...incomeData,
-      [section]: [
-        ...incomeData[section],
-        {
-          id: newId,
-          name: 'その他',
-          type: 'income',
-          category: 'income', // デフォルトカテゴリ
-          amounts: {},
-          investmentRatio: 0, // デフォルト投資割合
-          maxInvestmentAmount: parameters.maxInvestmentAmount || 100, // デフォルト最大投資額
-        },
-      ],
+      [section]: [...incomeData[section], newItem]
     });
   };
 
   const removeIncomeItem = (section: 'personal' | 'corporate', id: string) => {
     setIncomeData({
       ...incomeData,
-      [section]: incomeData[section].filter(item => item.id !== id),
+      [section]: incomeData[section].filter(item => item.id !== id)
     });
   };
 
-  const handleNameChange = (
-    section: 'personal' | 'corporate',
-    itemId: string,
-    value: string
-  ) => {
+  const handleNameChange = (section: 'personal' | 'corporate', id: string, name: string) => {
     setIncomeData({
       ...incomeData,
       [section]: incomeData[section].map(item =>
-        item.id === itemId
-          ? {
-              ...item,
-              name: value,
+        item.id === id ? { ...item, name } : item
+      )
+    });
+  };
+
+  const handleAmountChange = (section: 'personal' | 'corporate', id: string, year: number, amount: number) => {
+    setIncomeData({
+      ...incomeData,
+      [section]: incomeData[section].map(item =>
+        item.id === id 
+          ? { 
+              ...item, 
+              amounts: { ...item.amounts, [year]: amount || 0 }
             }
           : item
-      ),
+      )
     });
   };
 
-  // カテゴリーを変更するハンドラを追加
-  const handleCategoryChange = (
-    section: 'personal' | 'corporate',
-    itemId: string,
-    value: string
-  ) => {
+  const handleAmountBlur = (section: 'personal' | 'corporate', id: string, year: number, amount: number) => {
+    const item = incomeData[section].find(i => i.id === id);
+    if (!item) return;
+
+    // 給与収入で会社員または厚生年金ありのパートの場合は手取り計算
+    if (section === 'personal' && isNetIncomeTarget(item.name)) {
+      const occupation = item.name === '給与収入' ? basicInfo.occupation : basicInfo.spouseInfo?.occupation;
+      const netResult = calculateNetIncome(amount, occupation);
+      
+      setIncomeData({
+        ...incomeData,
+        [section]: incomeData[section].map(i =>
+          i.id === id 
+            ? { 
+                ...i, 
+                amounts: { ...i.amounts, [year]: netResult.netIncome },
+                _originalAmounts: { ...i._originalAmounts, [year]: amount }
+              }
+            : i
+        )
+      });
+    }
+  };
+
+  const handleInvestmentPercentageChange = (section: 'personal' | 'corporate', id: string, percentage: number) => {
     setIncomeData({
       ...incomeData,
       [section]: incomeData[section].map(item =>
-        item.id === itemId
+        item.id === id ? { ...item, investmentPercentage: percentage } : item
+      )
+    });
+  };
+
+  const handleMaxInvestmentAmountChange = (section: 'personal' | 'corporate', id: string, amount: number) => {
+    setIncomeData({
+      ...incomeData,
+      [section]: incomeData[section].map(item =>
+        item.id === id ? { ...item, maxInvestmentAmount: amount } : item
+      )
+    });
+  };
+
+  const handleCategoryChange = (section: 'personal' | 'corporate', id: string, value: string) => {
+    setIncomeData({
+      ...incomeData,
+      [section]: incomeData[section].map(item =>
+        item.id === id
           ? {
               ...item,
               category: value,
@@ -584,8 +584,8 @@ export function IncomeForm() {
                     <span>自動入力</span>
                     <TermTooltip term="" width="narrow">
                       {section === 'personal' 
-                        ? '給与を就職終了年齢まで自動計算します。昇給率または昇給額を指定できます。'
-                        : '収入を終了年齢まで自動計算します。増加率または増加額を指定できます。'}
+                        ? '個人収入の自動入力設定です。初期金額、終了年齢、増加方式、上限値を設定できます。'
+                        : '法人収入の自動入力設定です。初期金額、終了年齢、増加方式、上限値を設定できます。'}
                     </TermTooltip>
                   </div>
                 </th>
@@ -612,7 +612,7 @@ export function IncomeForm() {
                   </td>
                   <td className="px-4 py-2">
                     <CategorySelect
-                      value={item.category || 'income'}
+                      value={item.category || 'other'}
                       onChange={(value) => handleCategoryChange(section, item.id, value)}
                       categories={INCOME_CATEGORIES}
                     />
@@ -622,8 +622,8 @@ export function IncomeForm() {
                       type="number"
                       min="0"
                       max="100"
-                      value={item.investmentRatio || 0}
-                      onChange={(e) => handleInvestmentRatioChange(section, item.id, Number(e.target.value))}
+                      value={item.investmentPercentage || 0}
+                      onChange={(e) => handleInvestmentPercentageChange(section, item.id, Number(e.target.value))}
                       className="w-full text-right rounded-md border border-gray-200 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     />
                   </td>
@@ -657,18 +657,13 @@ export function IncomeForm() {
                         className="w-full text-right rounded-md border border-gray-200 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                         placeholder="0"
                       />
-                      {section === 'personal' && isNetIncomeTarget(item.name) && item._originalAmounts && item._originalAmounts[year] > 0 && (
-                        <div className="text-xs text-gray-500 mt-1">
-                          額面: {item._originalAmounts[year]}万円
-                        </div>
-                      )}
                     </td>
                   ))}
                   <td className="px-4 py-2 text-center">
                     <button
                       type="button"
                       onClick={() => removeIncomeItem(section, item.id)}
-                      className="text-red-500 hover:text-red-700 transition-colors"
+                      className="text-red-500 hover:text-red-700"
                     >
                       <Trash2 className="h-4 w-4" />
                     </button>
@@ -682,12 +677,12 @@ export function IncomeForm() {
     );
   };
 
-  const handleNext = () => {
+  const handleBack = () => {
     setCurrentStep(3);
   };
 
-  const handleBack = () => {
-    setCurrentStep(1);
+  const handleNext = () => {
+    setCurrentStep(5);
   };
 
   return (
@@ -699,25 +694,16 @@ export function IncomeForm() {
         </div>
       </div>
 
-      <div className="bg-blue-50 p-4 rounded-md mb-4">
-        <h3 className="text-md font-medium text-blue-800 mb-2 flex items-center">
-          <span>投資設定について</span>
-        </h3>
-        <p className="text-sm text-blue-700">
-          各収入項目ごとに投資設定を行うことができます。投資割合(%)は収入のうち何%を投資に回すかを、
-          最大投資額は年間いくらまで投資するかの上限を設定します。
-          これらの設定は自動的に運用資産に反映され、設定した運用利回りで収益が発生します。
-        </p>
-      </div>
-
       <div className="bg-purple-50 p-4 rounded-md mb-4">
         <h3 className="text-md font-medium text-purple-800 mb-2 flex items-center">
-          <span>自動入力機能について</span>
+          <span>自動入力機能と上限値設定について</span>
           <Wand2 className="h-4 w-4 ml-2" />
         </h3>
         <p className="text-sm text-purple-700">
-          全ての収入項目に自動入力機能があります。初期金額、終了年齢、増加タイプ（増加率または増加額）を設定すると、
-          金額を終了年齢まで自動的に計算します。計算後も各年の値は個別に編集可能です。
+          全ての収入項目に自動入力機能があります。初期金額、終了年齢、増加タイプ（増加率または増加額）、
+          <span className="font-bold text-purple-900">上限値</span>を設定すると、
+          金額を終了年齢まで自動的に計算します。上限値を設定することで、売上目標を超えないように制限できます。
+          計算後も各年の値は個別に編集可能です。
           給与収入の場合は、会社員・公務員（または厚生年金あり）は引き続き手取り金額に自動変換されます。
         </p>
       </div>

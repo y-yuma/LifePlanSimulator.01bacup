@@ -678,11 +678,11 @@ export function IncomeForm() {
   };
 
   const handleBack = () => {
-    setCurrentStep(3);
+    setCurrentStep(1);
   };
 
   const handleNext = () => {
-    setCurrentStep(5);
+    setCurrentStep(3);
   };
 
   return (

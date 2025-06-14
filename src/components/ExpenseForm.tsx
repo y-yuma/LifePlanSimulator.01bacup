@@ -553,11 +553,11 @@ export function ExpenseForm() {
   };
 
   const handleBack = () => {
-    setCurrentStep(4);
+    setCurrentStep(2);
   };
 
   const handleNext = () => {
-    setCurrentStep(6);
+    setCurrentStep(4);
   };
 
   const syncCashFlowFromFormData = () => {

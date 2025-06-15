@@ -28,7 +28,7 @@ interface LoanCalculationSettings {
   repaymentType: 'equal_principal' | 'equal_payment';
 }
 
-// 自動計算モーダルコンポーネント
+// 自動計算モーダルコンポーネント（過去借入対応版）
 const LoanCalculationModal: React.FC<LoanCalculationModalProps> = ({
   isOpen,
   onClose,
@@ -47,13 +47,16 @@ const LoanCalculationModal: React.FC<LoanCalculationModalProps> = ({
     }
   );
 
-  // 利用可能な年の配列
-  const years = Array.from(
-    { length: basicInfo.deathAge - basicInfo.currentAge + 1 },
-    (_, i) => basicInfo.startYear + i
-  );
+  const currentYear = new Date().getFullYear();
+  
+  // 過去50年から未来50年まで選択可能
+  const startYearOptions = [];
+  for (let year = currentYear - 50; year <= currentYear + 50; year++) {
+    startYearOptions.push(year);
+  }
 
   const modalTitle = `${itemName} 自動計算設定`;
+  const isHistoricalLoan = settings.startYear < currentYear;
 
   if (!isOpen) return null;
 
@@ -61,15 +64,24 @@ const LoanCalculationModal: React.FC<LoanCalculationModalProps> = ({
   const calculatePreview = () => {
     const { borrowAmount, interestRate, termYears, repaymentType } = settings;
     
-    if (borrowAmount <= 0 || termYears <= 0) return { monthlyPayment: 0, totalPayment: 0, totalInterest: 0 };
+    if (borrowAmount <= 0 || termYears <= 0) return { monthlyPayment: 0, totalPayment: 0, totalInterest: 0, currentBalance: 0 };
 
     if (interestRate === 0) {
       // 金利0%の場合
       const yearlyPayment = borrowAmount / termYears;
+      
+      // 過去の借入の場合、現在の残高を計算
+      let currentBalance = borrowAmount;
+      if (isHistoricalLoan) {
+        const elapsedYears = currentYear - settings.startYear;
+        currentBalance = Math.max(0, borrowAmount - (yearlyPayment * elapsedYears));
+      }
+      
       return {
         monthlyPayment: Math.round(yearlyPayment / 12 * 10) / 10,
         totalPayment: borrowAmount,
-        totalInterest: 0
+        totalInterest: 0,
+        currentBalance: Math.round(currentBalance * 10) / 10
       };
     }
 
@@ -84,24 +96,49 @@ const LoanCalculationModal: React.FC<LoanCalculationModalProps> = ({
       
       const totalPayment = monthlyPayment * totalPayments;
       
+      // 過去の借入の場合、現在の残高を計算
+      let currentBalance = borrowAmount;
+      if (isHistoricalLoan) {
+        const elapsedMonths = (currentYear - settings.startYear) * 12;
+        for (let i = 0; i < elapsedMonths && i < totalPayments; i++) {
+          const interestPayment = currentBalance * monthlyRate;
+          const principalPayment = monthlyPayment - interestPayment;
+          currentBalance = Math.max(0, currentBalance - principalPayment);
+        }
+      }
+      
       return {
         monthlyPayment: Math.round(monthlyPayment * 10) / 10,
         totalPayment: Math.round(totalPayment * 10) / 10,
-        totalInterest: Math.round((totalPayment - borrowAmount) * 10) / 10
+        totalInterest: Math.round((totalPayment - borrowAmount) * 10) / 10,
+        currentBalance: Math.round(currentBalance * 10) / 10
       };
     } else {
       // 元金均等返済
-      const principalPayment = borrowAmount / totalPayments;
-      const firstInterestPayment = borrowAmount * monthlyRate;
-      const firstMonthlyPayment = principalPayment + firstInterestPayment;
+      const monthlyPrincipal = borrowAmount / totalPayments;
+      let totalInterest = 0;
+      let remainingBalance = borrowAmount;
       
-      const totalInterest = borrowAmount * monthlyRate * (totalPayments + 1) / 2;
-      const totalPayment = borrowAmount + totalInterest;
+      for (let i = 0; i < totalPayments; i++) {
+        const monthlyInterest = remainingBalance * monthlyRate;
+        totalInterest += monthlyInterest;
+        remainingBalance -= monthlyPrincipal;
+      }
+      
+      const firstMonthPayment = monthlyPrincipal + (borrowAmount * monthlyRate);
+      
+      // 過去の借入の場合、現在の残高を計算
+      let currentBalance = borrowAmount;
+      if (isHistoricalLoan) {
+        const elapsedMonths = (currentYear - settings.startYear) * 12;
+        currentBalance = Math.max(0, borrowAmount - (monthlyPrincipal * elapsedMonths));
+      }
       
       return {
-        monthlyPayment: Math.round(firstMonthlyPayment * 10) / 10,
-        totalPayment: Math.round(totalPayment * 10) / 10,
-        totalInterest: Math.round(totalInterest * 10) / 10
+        monthlyPayment: Math.round(firstMonthPayment * 10) / 10,
+        totalPayment: Math.round((borrowAmount + totalInterest) * 10) / 10,
+        totalInterest: Math.round(totalInterest * 10) / 10,
+        currentBalance: Math.round(currentBalance * 10) / 10
       };
     }
   };
@@ -110,86 +147,85 @@ const LoanCalculationModal: React.FC<LoanCalculationModalProps> = ({
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4 max-h-[90vh] overflow-y-auto">
+      <div className="bg-white rounded-lg p-6 w-full max-w-lg max-h-[90vh] overflow-y-auto">
         <div className="flex justify-between items-center mb-4">
-          <h3 className="text-lg font-semibold">{modalTitle}</h3>
+          <h3 className="text-lg font-bold">{modalTitle}</h3>
           <button onClick={onClose} className="text-gray-500 hover:text-gray-700">
             <X className="h-5 w-5" />
           </button>
         </div>
 
         <div className="space-y-4">
-          {/* 借入額 */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              借入額（万円）
-            </label>
+          <div className="space-y-2">
+            <label className="text-sm font-medium">借入額（万円）</label>
             <input
               type="number"
-              min="0"
               value={settings.borrowAmount}
-              onChange={(e) => setSettings(prev => ({ ...prev, borrowAmount: Number(e.target.value) }))}
-              className="w-full rounded-md border border-gray-200 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              onChange={(e) => setSettings({...settings, borrowAmount: Number(e.target.value)})}
+              className="w-full rounded-md border border-gray-200 px-3 py-2"
+              placeholder="例：3000"
+              min="0"
+              step="1"
             />
           </div>
 
-          {/* 開始年 */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              借入開始年
-            </label>
+          <div className="space-y-2">
+            <label className="text-sm font-medium">借入開始年</label>
             <select
               value={settings.startYear}
-              onChange={(e) => setSettings(prev => ({ ...prev, startYear: Number(e.target.value) }))}
-              className="w-full rounded-md border border-gray-200 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              onChange={(e) => setSettings({...settings, startYear: Number(e.target.value)})}
+              className="w-full rounded-md border border-gray-200 px-3 py-2"
             >
-              {years.map(year => (
-                <option key={year} value={year}>{year}年</option>
+              {startYearOptions.map((year) => (
+                <option key={year} value={year}>
+                  {year}年
+                </option>
               ))}
             </select>
+            <p className="text-xs text-gray-500">
+              ※過去の借入や将来の借入予定も設定可能です
+            </p>
           </div>
 
-          {/* 金利 */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              年間金利（%）
-            </label>
+          <div className="space-y-2">
+            <label className="text-sm font-medium">年利（%）</label>
             <input
               type="number"
+              value={settings.interestRate}
+              onChange={(e) => setSettings({...settings, interestRate: Number(e.target.value)})}
+              className="w-full rounded-md border border-gray-200 px-3 py-2"
+              placeholder="例：2.0"
               min="0"
               step="0.1"
-              value={settings.interestRate}
-              onChange={(e) => setSettings(prev => ({ ...prev, interestRate: Number(e.target.value) }))}
-              className="w-full rounded-md border border-gray-200 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
             />
+            <p className="text-xs text-gray-500">
+              ※金利0%の場合は元金のみの計算になります
+            </p>
           </div>
 
-          {/* 返済期間 */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              返済期間（年）
-            </label>
+          <div className="space-y-2">
+            <label className="text-sm font-medium">返済期間（年）</label>
             <input
               type="number"
-              min="1"
               value={settings.termYears}
-              onChange={(e) => setSettings(prev => ({ ...prev, termYears: Number(e.target.value) }))}
-              className="w-full rounded-md border border-gray-200 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              onChange={(e) => setSettings({...settings, termYears: Number(e.target.value)})}
+              className="w-full rounded-md border border-gray-200 px-3 py-2"
+              placeholder="例：30"
+              min="1"
+              max="50"
+              step="1"
             />
           </div>
 
-          {/* 返済方式 */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              返済方式
-            </label>
+          <div className="space-y-2">
+            <label className="text-sm font-medium">返済方式</label>
             <select
               value={settings.repaymentType}
-              onChange={(e) => setSettings(prev => ({ ...prev, repaymentType: e.target.value as 'equal_principal' | 'equal_payment' }))}
-              className="w-full rounded-md border border-gray-200 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              onChange={(e) => setSettings({...settings, repaymentType: e.target.value as 'equal_principal' | 'equal_payment'})}
+              className="w-full rounded-md border border-gray-200 px-3 py-2"
             >
-              <option value="equal_payment">元利均等返済</option>
-              <option value="equal_principal">元金均等返済</option>
+              <option value="equal_payment">元利均等返済（毎回の返済額が一定）</option>
+              <option value="equal_principal">元金均等返済（毎回の元金返済額が一定）</option>
             </select>
           </div>
 
@@ -203,8 +239,37 @@ const LoanCalculationModal: React.FC<LoanCalculationModalProps> = ({
               </p>
               <p>総返済額: <span className="font-semibold">{preview.totalPayment}万円</span></p>
               <p>総利息: <span className="font-semibold">{preview.totalInterest}万円</span></p>
+              {isHistoricalLoan && (
+                <p className="text-orange-600 font-semibold">
+                  現在の推定残高: <span>{preview.currentBalance}万円</span>
+                </p>
+              )}
             </div>
           </div>
+
+          {/* 過去の借入の場合の説明 */}
+          {isHistoricalLoan && (
+            <div className="bg-orange-50 p-3 rounded-md">
+              <h4 className="text-sm font-medium text-orange-800 mb-1">過去の借入について</h4>
+              <ul className="text-xs text-orange-700 space-y-1">
+                <li>• 借入時：現金・預金への追加はありません（既に過去に借入済みのため）</li>
+                <li>• 残高計算：経過年数を考慮した現在の推定残高から開始します</li>
+                <li>• 返済処理：今後の返済スケジュールを自動計算します</li>
+              </ul>
+            </div>
+          )}
+
+          {/* 将来の借入の場合の説明 */}
+          {!isHistoricalLoan && (
+            <div className="bg-green-50 p-3 rounded-md">
+              <h4 className="text-sm font-medium text-green-800 mb-1">将来の借入について</h4>
+              <ul className="text-xs text-green-700 space-y-1">
+                <li>• 借入時：現金・預金に借入額が自動追加されます</li>
+                <li>• 返済時：各年の返済額が現金・預金から自動減算されます</li>
+                <li>• 負債残高：返済スケジュールに従って自動計算されます</li>
+              </ul>
+            </div>
+          )}
         </div>
 
         <div className="flex justify-end space-x-3 mt-6">
@@ -247,6 +312,8 @@ export function AssetsLiabilitiesForm() {
     (_, i) => basicInfo.startYear + i
   );
 
+  const currentYear = new Date().getFullYear();
+
   const handleBack = () => {
     setCurrentStep(3);
   };
@@ -255,119 +322,67 @@ export function AssetsLiabilitiesForm() {
     setCurrentStep(5);
   };
 
-  const handleAssetAmountChange = (
-    section: 'personal' | 'corporate',
-    itemId: string,
-    year: number,
-    value: number
-  ) => {
-    setAssetData({
-      ...assetData,
-      [section]: assetData[section].map(item =>
-        item.id === itemId
-          ? {
-              ...item,
-              amounts: {
-                ...item.amounts,
-                [year]: value,
-              },
-            }
-          : item
-      ),
-    });
-    syncCashFlowFromFormData();
-  };
-
-  const handleLiabilityAmountChange = (
-    section: 'personal' | 'corporate',
-    itemId: string,
-    year: number,
-    value: number
-  ) => {
-    // 自動計算が有効な項目は手動変更を防ぐ
-    const item = liabilityData[section].find(i => i.id === itemId);
-    if (item?.autoCalculate && item.startYear && year !== item.startYear) {
-      return; // 自動計算項目の返済年は変更不可
-    }
-
-    // 負債は正の値で保存（借入額）
-    const positiveValue = Math.abs(value);
-    
-    setLiabilityData({
-      ...liabilityData,
-      [section]: liabilityData[section].map(item =>
-        item.id === itemId
-          ? {
-              ...item,
-              amounts: {
-                ...item.amounts,
-                [year]: positiveValue,
-              },
-            }
-          : item
-      ),
-    });
-    syncCashFlowFromFormData();
-  };
-
+  // 資産項目を追加
   const addAssetItem = (section: 'personal' | 'corporate') => {
-    const newId = String(Math.max(...assetData[section].map(i => Number(i.id) || 0), 0) + 1);
+    const newId = Date.now().toString();
     setAssetData({
       ...assetData,
       [section]: [
         ...assetData[section],
         {
           id: newId,
-          name: 'その他',
-          type: 'other',
+          name: '',
+          type: 'cash' as const,
           category: 'asset',
           amounts: {},
           isInvestment: false,
-          investmentReturn: 3.0, // デフォルト3%の運用利回り
+          investmentReturn: 0,
         },
       ],
     });
-    syncCashFlowFromFormData();
   };
 
+  // 負債項目を追加
   const addLiabilityItem = (section: 'personal' | 'corporate') => {
-    const newId = String(Math.max(...liabilityData[section].map(i => Number(i.id) || 0), 0) + 1);
+    const newId = Date.now().toString();
     setLiabilityData({
       ...liabilityData,
       [section]: [
         ...liabilityData[section],
         {
           id: newId,
-          name: 'その他',
-          type: 'other',
+          name: '',
+          type: 'loan' as const,
           category: 'liability',
           amounts: {},
+          autoCalculate: false,
           interestRate: 0,
           termYears: 0,
-          autoCalculate: false,
           repaymentType: 'equal_payment',
         },
       ],
     });
-    syncCashFlowFromFormData();
   };
 
-  const removeAssetItem = (section: 'personal' | 'corporate', id: string) => {
+  // 資産項目を削除
+  const removeAssetItem = (section: 'personal' | 'corporate', itemId: string) => {
     setAssetData({
       ...assetData,
-      [section]: assetData[section].filter(item => item.id !== id),
+      [section]: assetData[section].filter(item => item.id !== itemId),
     });
     syncCashFlowFromFormData();
   };
 
-  const removeLiabilityItem = (section: 'personal' | 'corporate', id: string) => {
+  // 負債項目を削除
+  const removeLiabilityItem = (section: 'personal' | 'corporate', itemId: string) => {
     setLiabilityData({
       ...liabilityData,
-      [section]: liabilityData[section].filter(item => item.id !== id),
+      [section]: liabilityData[section].filter(item => item.id !== itemId),
     });
     syncCashFlowFromFormData();
   };
 
+  // 資産名を変更
   const handleAssetNameChange = (
     section: 'personal' | 'corporate',
     itemId: string,
@@ -387,6 +402,7 @@ export function AssetsLiabilitiesForm() {
     syncCashFlowFromFormData();
   };
 
+  // 負債名を変更
   const handleLiabilityNameChange = (
     section: 'personal' | 'corporate',
     itemId: string,
@@ -525,6 +541,373 @@ export function AssetsLiabilitiesForm() {
     syncCashFlowFromFormData();
   };
 
+  const handleAssetAmountChange = (
+    section: 'personal' | 'corporate',
+    itemId: string,
+    year: number,
+    value: number
+  ) => {
+    setAssetData({
+      ...assetData,
+      [section]: assetData[section].map(item =>
+        item.id === itemId
+          ? {
+              ...item,
+              amounts: {
+                ...item.amounts,
+                [year]: value,
+              },
+            }
+          : item
+      ),
+    });
+    syncCashFlowFromFormData();
+  };
+
+  const handleLiabilityAmountChange = (
+    section: 'personal' | 'corporate',
+    itemId: string,
+    year: number,
+    value: number
+  ) => {
+    // 自動計算が有効な項目は手動変更を防ぐ
+    const item = liabilityData[section].find(i => i.id === itemId);
+    if (item?.autoCalculate && item.startYear && year !== item.startYear) {
+      return; // 自動計算項目の返済年は変更不可
+    }
+
+    // 負債は正の値で保存（借入額）
+    const positiveValue = Math.abs(value);
+    
+    setLiabilityData({
+      ...liabilityData,
+      [section]: liabilityData[section].map(item =>
+        item.id === itemId
+          ? {
+              ...item,
+              amounts: {
+                ...item.amounts,
+                [year]: positiveValue,
+              },
+            }
+          : item
+      ),
+    });
+    syncCashFlowFromFormData();
+  };
+
+  // 過去の借入に対応したローン返済スケジュール計算
+  const calculateLoanScheduleWithHistory = (
+    borrowAmount: number,
+    interestRate: number,
+    termYears: number,
+    repaymentType: 'equal_principal' | 'equal_payment',
+    startYear: number
+  ) => {
+    const schedule: Array<{
+      year: number;
+      payment: number;
+      principal: number;
+      interest: number;
+      remainingBalance: number;
+    }> = [];
+
+    const elapsedYears = Math.max(0, currentYear - startYear);
+    
+    if (interestRate === 0) {
+      // 金利0%の場合：元金均等返済
+      const yearlyPrincipalPayment = borrowAmount / termYears;
+      
+      // 現在の残高を計算（過去の返済分を考慮）
+      let currentBalance = Math.max(0, borrowAmount - (yearlyPrincipalPayment * elapsedYears));
+      
+      // 現在年から将来の返済スケジュールを作成
+      const remainingTermYears = Math.max(0, termYears - elapsedYears);
+      
+      for (let year = 1; year <= remainingTermYears; year++) {
+        const actualYear = currentYear + year;
+        currentBalance = Math.max(0, currentBalance - yearlyPrincipalPayment);
+        
+        schedule.push({
+          year: actualYear,
+          payment: yearlyPrincipalPayment,
+          principal: yearlyPrincipalPayment,
+          interest: 0,
+          remainingBalance: currentBalance
+        });
+      }
+    } else {
+      const monthlyRate = interestRate / 100 / 12;
+      const totalPayments = termYears * 12;
+      const elapsedMonths = elapsedYears * 12;
+      
+      if (repaymentType === 'equal_payment') {
+        // 元利均等返済
+        const monthlyPayment = borrowAmount * 
+          (monthlyRate * Math.pow(1 + monthlyRate, totalPayments)) / 
+          (Math.pow(1 + monthlyRate, totalPayments) - 1);
+        
+        // 現在の残高を計算
+        let currentBalance = borrowAmount;
+        for (let i = 0; i < elapsedMonths && i < totalPayments; i++) {
+          const interestPayment = currentBalance * monthlyRate;
+          const principalPayment = monthlyPayment - interestPayment;
+          currentBalance = Math.max(0, currentBalance - principalPayment);
+        }
+        
+        // 将来の返済スケジュールを作成
+        const remainingPayments = Math.max(0, totalPayments - elapsedMonths);
+        const remainingYears = Math.ceil(remainingPayments / 12);
+        
+        for (let year = 1; year <= remainingYears; year++) {
+          const actualYear = currentYear + year;
+          
+          // 1年分の返済を計算
+          let yearlyPayment = 0;
+          let yearlyPrincipal = 0;
+          let yearlyInterest = 0;
+          
+          for (let month = 0; month < 12 && currentBalance > 0; month++) {
+            const interestPayment = currentBalance * monthlyRate;
+            const principalPayment = Math.min(monthlyPayment - interestPayment, currentBalance);
+            
+            yearlyPayment += monthlyPayment;
+            yearlyPrincipal += principalPayment;
+            yearlyInterest += interestPayment;
+            currentBalance = Math.max(0, currentBalance - principalPayment);
+          }
+          
+          schedule.push({
+            year: actualYear,
+            payment: Math.round(yearlyPayment * 10) / 10,
+            principal: Math.round(yearlyPrincipal * 10) / 10,
+            interest: Math.round(yearlyInterest * 10) / 10,
+            remainingBalance: Math.round(currentBalance * 10) / 10
+          });
+        }
+      } else {
+        // 元金均等返済
+        const monthlyPrincipal = borrowAmount / totalPayments;
+        
+        // 現在の残高を計算
+        let currentBalance = Math.max(0, borrowAmount - (monthlyPrincipal * elapsedMonths));
+        
+        // 将来の返済スケジュールを作成
+        const remainingPayments = Math.max(0, totalPayments - elapsedMonths);
+        const remainingYears = Math.ceil(remainingPayments / 12);
+        
+        for (let year = 1; year <= remainingYears; year++) {
+          const actualYear = currentYear + year;
+          
+          // 1年分の返済を計算
+          let yearlyPayment = 0;
+          let yearlyInterest = 0;
+          const yearlyPrincipal = Math.min(monthlyPrincipal * 12, currentBalance);
+          
+          for (let month = 0; month < 12 && currentBalance > 0; month++) {
+            const interestPayment = currentBalance * monthlyRate;
+            yearlyPayment += monthlyPrincipal + interestPayment;
+            yearlyInterest += interestPayment;
+            currentBalance = Math.max(0, currentBalance - monthlyPrincipal);
+          }
+          
+          schedule.push({
+            year: actualYear,
+            payment: Math.round(yearlyPayment * 10) / 10,
+            principal: Math.round(yearlyPrincipal * 10) / 10,
+            interest: Math.round(yearlyInterest * 10) / 10,
+            remainingBalance: Math.round(currentBalance * 10) / 10
+          });
+        }
+      }
+    }
+
+    return schedule;
+  };
+
+  // ローン計算を適用（過去の借入対応版）
+  const applyLoanCalculation = (settings: LoanCalculationSettings) => {
+    const { borrowAmount, startYear, interestRate, termYears, repaymentType } = settings;
+    
+    if (!currentLiabilityId) return;
+
+    const isHistoricalLoan = startYear < currentYear;
+    
+    // 現金・預金項目を取得
+    const cashAssetItem = assetData[currentSection].find(asset => 
+      asset.type === 'cash' || asset.name.includes('現金') || asset.name.includes('預金')
+    );
+
+    // 返済スケジュールを計算（過去の借入対応）
+    const schedule = calculateLoanScheduleWithHistory(
+      borrowAmount, 
+      interestRate, 
+      termYears, 
+      repaymentType, 
+      startYear
+    );
+
+    // 現在の推定残高を計算
+    let currentEstimatedBalance = borrowAmount;
+    if (isHistoricalLoan) {
+      const elapsedYears = currentYear - startYear;
+      
+      if (interestRate === 0) {
+        const yearlyPrincipalPayment = borrowAmount / termYears;
+        currentEstimatedBalance = Math.max(0, borrowAmount - (yearlyPrincipalPayment * elapsedYears));
+      } else {
+        const monthlyRate = interestRate / 100 / 12;
+        const totalPayments = termYears * 12;
+        const elapsedMonths = elapsedYears * 12;
+        
+        if (repaymentType === 'equal_payment') {
+          const monthlyPayment = borrowAmount * 
+            (monthlyRate * Math.pow(1 + monthlyRate, totalPayments)) / 
+            (Math.pow(1 + monthlyRate, totalPayments) - 1);
+          
+          let balance = borrowAmount;
+          for (let i = 0; i < elapsedMonths && i < totalPayments; i++) {
+            const interestPayment = balance * monthlyRate;
+            const principalPayment = monthlyPayment - interestPayment;
+            balance = Math.max(0, balance - principalPayment);
+          }
+          currentEstimatedBalance = balance;
+        } else {
+          const monthlyPrincipal = borrowAmount / totalPayments;
+          currentEstimatedBalance = Math.max(0, borrowAmount - (monthlyPrincipal * elapsedMonths));
+        }
+      }
+    }
+
+    // 負債データを更新
+    const updatedLiabilityData = {
+      ...liabilityData,
+      [currentSection]: liabilityData[currentSection].map(item => {
+        if (item.id === currentLiabilityId) {
+          const newAmounts: { [year: number]: number } = {};
+          
+          if (isHistoricalLoan) {
+            // 過去の借入の場合、現在年に推定残高を設定
+            newAmounts[currentYear] = Math.round(currentEstimatedBalance * 10) / 10;
+          } else {
+            // 将来の借入の場合、借入年に元本を設定
+            newAmounts[startYear] = borrowAmount;
+          }
+          
+          // 将来の各年の残高を設定
+          schedule.forEach((payment) => {
+            newAmounts[payment.year] = payment.remainingBalance;
+          });
+
+          return {
+            ...item,
+            amounts: newAmounts,
+            startYear,
+            interestRate,
+            termYears,
+            repaymentType,
+            autoCalculate: true,
+            borrowAmount
+          };
+        }
+        return item;
+      })
+    };
+
+    // 現金・預金を更新
+    let updatedAssetData = assetData;
+    if (cashAssetItem) {
+      updatedAssetData = {
+        ...assetData,
+        [currentSection]: assetData[currentSection].map(item => {
+          if (item.id === cashAssetItem.id) {
+            const newAmounts = { ...item.amounts };
+            
+            if (!isHistoricalLoan) {
+              // 将来の借入の場合のみ、借入年に現金を増加
+              newAmounts[startYear] = (newAmounts[startYear] || 0) + borrowAmount;
+            }
+            
+            // 返済による現金減算を各年に適用
+            schedule.forEach(payment => {
+              newAmounts[payment.year] = (newAmounts[payment.year] || 0) - payment.payment;
+            });
+
+            return {
+              ...item,
+              amounts: newAmounts
+            };
+          }
+          return item;
+        })
+      };
+    }
+
+    setLiabilityData(updatedLiabilityData);
+    setAssetData(updatedAssetData);
+    syncCashFlowFromFormData();
+    setLoanModalOpen(false);
+  };
+
+  // ローン計算モーダルを開く
+  const openLoanCalculationModal = (liabilityId: string, section: 'personal' | 'corporate') => {
+    setCurrentLiabilityId(liabilityId);
+    setCurrentSection(section);
+    setLoanModalOpen(true);
+  };
+
+  // ローン計算を取消
+  const cancelLoanCalculation = (section: 'personal' | 'corporate', liabilityId: string) => {
+    const item = liabilityData[section].find(i => i.id === liabilityId);
+    if (!item || !item.autoCalculate) return;
+
+    // 現金・預金項目から借入額を減額
+    if (item.startYear && item.borrowAmount && item.startYear >= currentYear) {
+      const cashAssetItem = assetData[section].find(asset => 
+        asset.type === 'cash' || asset.name.includes('現金') || asset.name.includes('預金')
+      );
+
+      if (cashAssetItem) {
+        setAssetData({
+          ...assetData,
+          [section]: assetData[section].map(asset =>
+            asset.id === cashAssetItem.id
+              ? {
+                  ...asset,
+                  amounts: {
+                    ...asset.amounts,
+                    [item.startYear!]: Math.max(0, (asset.amounts[item.startYear!] || 0) - item.borrowAmount!),
+                  },
+                }
+              : asset
+          ),
+        });
+      }
+    }
+
+    // 負債データをリセット
+    setLiabilityData({
+      ...liabilityData,
+      [section]: liabilityData[section].map(item =>
+        item.id === liabilityId
+          ? {
+              ...item,
+              amounts: {},
+              interestRate: 0,
+              termYears: 0,
+              autoCalculate: false,
+              repaymentType: 'equal_payment',
+              startYear: undefined,
+              borrowAmount: undefined,
+            }
+          : item
+      ),
+    });
+
+    syncCashFlowFromFormData();
+  };
+
+  // 資産テーブルのレンダリング
   const renderAssetTable = (section: 'personal' | 'corporate') => {
     const items = assetData[section];
     const title = section === 'personal' ? '個人' : '法人';
@@ -620,18 +1003,16 @@ export function AssetsLiabilitiesForm() {
                       type="checkbox"
                       checked={item.isInvestment}
                       onChange={() => toggleAssetInvestment(section, item.id)}
-                      className="h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                      className="rounded border-gray-300"
                     />
                   </td>
                   <td className="px-4 py-2">
                     <input
                       type="number"
-                      min="0"
-                      step="0.1"
-                      value={item.investmentReturn || 0}
+                      value={item.investmentReturn || ''}
                       onChange={(e) => handleInvestmentReturnChange(section, item.id, Number(e.target.value))}
                       disabled={!item.isInvestment}
-                      className={`w-10 text-right rounded-md border border-gray-200 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
+                      className={`w-full text-right rounded-md border border-gray-200 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
                         !item.isInvestment ? 'bg-gray-100 text-gray-400' : ''
                       }`}
                       placeholder="0.0"
@@ -808,171 +1189,9 @@ export function AssetsLiabilitiesForm() {
     );
   };
 
-  // ローン計算モーダルを開く
-  const openLoanCalculationModal = (liabilityId: string, section: 'personal' | 'corporate') => {
-    setCurrentLiabilityId(liabilityId);
-    setCurrentSection(section);
-    setLoanModalOpen(true);
-  };
-
-  // ローン計算を適用
-  const applyLoanCalculation = (settings: LoanCalculationSettings) => {
-    const { borrowAmount, startYear, interestRate, termYears, repaymentType } = settings;
-    
-    // 返済スケジュールを計算
-    const schedule: { [year: number]: number } = {};
-    
-    // 借入年に借入額を設定
-    schedule[startYear] = borrowAmount;
-    
-    if (interestRate === 0) {
-      // 金利0%の場合、元金均等返済
-      const yearlyPayment = borrowAmount / termYears;
-      for (let i = 1; i <= termYears; i++) {
-        const repaymentYear = startYear + i;
-        if (repaymentYear <= basicInfo.startYear + (basicInfo.deathAge - basicInfo.currentAge)) {
-          schedule[repaymentYear] = -yearlyPayment;
-        }
-      }
-    } else {
-      const monthlyRate = interestRate / 100 / 12;
-      const totalPayments = termYears * 12;
-
-      if (repaymentType === 'equal_payment') {
-        // 元利均等返済
-        const monthlyPayment = borrowAmount * 
-          (monthlyRate * Math.pow(1 + monthlyRate, totalPayments)) / 
-          (Math.pow(1 + monthlyRate, totalPayments) - 1);
-        
-        const yearlyPayment = monthlyPayment * 12;
-        
-        for (let i = 1; i <= termYears; i++) {
-          const repaymentYear = startYear + i;
-          if (repaymentYear <= basicInfo.startYear + (basicInfo.deathAge - basicInfo.currentAge)) {
-            schedule[repaymentYear] = -yearlyPayment;
-          }
-        }
-      } else {
-        // 元金均等返済
-        const monthlyPrincipal = borrowAmount / totalPayments;
-        let remainingBalance = borrowAmount;
-        
-        for (let i = 1; i <= termYears; i++) {
-          const repaymentYear = startYear + i;
-          if (repaymentYear <= basicInfo.startYear + (basicInfo.deathAge - basicInfo.currentAge)) {
-            let yearlyPayment = 0;
-            
-            for (let j = 0; j < 12; j++) {
-              const monthlyInterest = remainingBalance * monthlyRate;
-              const monthlyPayment = monthlyPrincipal + monthlyInterest;
-              yearlyPayment += monthlyPayment;
-              remainingBalance -= monthlyPrincipal;
-            }
-            
-            schedule[repaymentYear] = -yearlyPayment;
-          }
-        }
-      }
-    }
-
-    // 負債データを更新
-    setLiabilityData({
-      ...liabilityData,
-      [currentSection]: liabilityData[currentSection].map(item =>
-        item.id === currentLiabilityId
-          ? {
-              ...item,
-              amounts: schedule,
-              interestRate: interestRate,
-              termYears: termYears,
-              autoCalculate: true,
-              repaymentType: repaymentType,
-              startYear: startYear,
-              borrowAmount: borrowAmount,
-            }
-          : item
-      ),
-    });
-
-    // 現金・預金項目を探して借入時に増額
-    const cashAssetItem = assetData[currentSection].find(item => 
-      item.type === 'cash' || item.name.includes('現金') || item.name.includes('預金')
-    );
-
-    if (cashAssetItem) {
-      setAssetData({
-        ...assetData,
-        [currentSection]: assetData[currentSection].map(item =>
-          item.id === cashAssetItem.id
-            ? {
-                ...item,
-                amounts: {
-                  ...item.amounts,
-                  [startYear]: (item.amounts[startYear] || 0) + borrowAmount,
-                },
-              }
-            : item
-        ),
-      });
-    }
-
-    syncCashFlowFromFormData();
-    setLoanModalOpen(false);
-  };
-
-  // ローン計算を取消
-  const cancelLoanCalculation = (section: 'personal' | 'corporate', liabilityId: string) => {
-    const item = liabilityData[section].find(i => i.id === liabilityId);
-    if (!item || !item.autoCalculate) return;
-
-    // 現金・預金項目から借入額を減額
-    if (item.startYear && item.borrowAmount) {
-      const cashAssetItem = assetData[section].find(asset => 
-        asset.type === 'cash' || asset.name.includes('現金') || asset.name.includes('預金')
-      );
-
-      if (cashAssetItem) {
-        setAssetData({
-          ...assetData,
-          [section]: assetData[section].map(asset =>
-            asset.id === cashAssetItem.id
-              ? {
-                  ...asset,
-                  amounts: {
-                    ...asset.amounts,
-                    [item.startYear!]: Math.max(0, (asset.amounts[item.startYear!] || 0) - item.borrowAmount!),
-                  },
-                }
-              : asset
-          ),
-        });
-      }
-    }
-
-    // 負債データをリセット
-    setLiabilityData({
-      ...liabilityData,
-      [section]: liabilityData[section].map(item =>
-        item.id === liabilityId
-          ? {
-              ...item,
-              amounts: {},
-              interestRate: 0,
-              termYears: 0,
-              autoCalculate: false,
-              repaymentType: 'equal_payment',
-              startYear: undefined,
-              borrowAmount: undefined,
-            }
-          : item
-      ),
-    });
-
-    syncCashFlowFromFormData();
-  };
-
   return (
     <div className="space-y-6">
+      {/* 説明セクション */}
       <div className="bg-blue-50 p-4 rounded-md mb-4">
         <h3 className="text-md font-medium text-blue-800 mb-2 flex items-center">
           <span>資産・負債情報について</span>
@@ -997,6 +1216,7 @@ export function AssetsLiabilitiesForm() {
             <li>間違えた場合は「取消」ボタンで完全にリセット</li>
           </ol>
           <p><strong>自動処理：</strong>借入時に現金・預金が自動で増加し、各年の返済で現金から返済額が自動で減算されます。</p>
+          <p><strong>過去の借入：</strong>開始年が現在より前の場合、経過年数を考慮した現在残高から計算を開始します。</p>
         </div>
       </div>
 

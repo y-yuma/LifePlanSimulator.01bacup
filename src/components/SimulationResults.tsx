@@ -27,6 +27,7 @@ ChartJS.register(
 );
 
 export function SimulationResults() {
+  const store = useSimulatorStore();
   const { 
     basicInfo, 
     cashFlow,
@@ -35,7 +36,7 @@ export function SimulationResults() {
     expenseData,
     setCurrentStep,
     initializeCashFlow 
-  } = useSimulatorStore();
+  } = store;
   
   // チャートの参照を保存するためのref
   const personalChartRef = useRef<any>(null);
@@ -215,6 +216,33 @@ export function SimulationResults() {
     ];
 
     return conditions.join(' | ');
+  };
+
+  // 全体データのエクスポート機能（追加）
+  const handleExportAllData = () => {
+    const data = {
+      basicInfo: store.basicInfo,
+      incomeData: store.incomeData,
+      expenseData: store.expenseData,
+      assetData: store.assetData,
+      liabilityData: store.liabilityData,
+      lifeEvents: store.lifeEvents,
+      parameters: store.parameters,
+      cashFlow: store.cashFlow,
+      exportDate: new Date().toISOString(),
+      version: '1.0'
+    };
+
+    const jsonString = JSON.stringify(data, null, 2);
+    const blob = new Blob([jsonString], { type: 'application/json' });
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', `ライフプランデータ_${new Date().toISOString().split('T')[0]}.json`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(url);
   };
 
   // PDF エクスポート機能（ブラウザの印刷機能を使用）
@@ -532,16 +560,16 @@ export function SimulationResults() {
         </div>
       </div>
 
-      {/* エクスポートボタンを追加 */}
+      {/* エクスポートボタン（ボタンテキストのみ変更） */}
       <div className="bg-white p-4 rounded-lg shadow">
         <h3 className="text-lg font-semibold mb-4">エクスポート</h3>
         <div className="flex flex-wrap gap-4">
           <button
             type="button"
-            onClick={handleExportCSV}
+            onClick={handleExportAllData}
             className="px-6 py-2 bg-green-500 text-white rounded-md hover:bg-green-600 flex items-center gap-2"
           >
-            エクセル形式でエクスポート
+            全体を保存
           </button>
           <button
             type="button"
@@ -552,7 +580,7 @@ export function SimulationResults() {
           </button>
         </div>
         <p className="text-sm text-gray-600 mt-2">
-          エクセル形式：詳細なデータをCSVファイルで出力します<br/>
+          全体を保存：すべての入力データと結果をJSONファイルで保存します（続きから始める際に使用）<br/>
           PDF形式：キャッシュフロー表とグラフを含むレポートを印刷機能でPDF出力します
         </p>
       </div>

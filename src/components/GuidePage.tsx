@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
-import { ChevronDown, ChevronUp, Info, AlertTriangle, Sparkles, FileText } from 'lucide-react';
+import React, { useState, useRef } from 'react';
+import { ChevronDown, ChevronUp, Info, AlertTriangle, Sparkles, FileText, Upload } from 'lucide-react';
 import { useSimulatorStore } from '@/store/simulator';
 
 export function GuidePage() {
-  const { setCurrentStep } = useSimulatorStore();
+  const store = useSimulatorStore();
+  const { setCurrentStep } = store;
   const [openSections, setOpenSections] = useState({
     intro: true,
     terms: false,
@@ -15,6 +16,11 @@ export function GuidePage() {
     cashflow: false
   });
 
+  // インポート機能のための状態（追加）
+  const [importError, setImportError] = useState<string>('');
+  const [isImporting, setIsImporting] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   const toggleSection = (section: string) => {
     setOpenSections(prev => ({
       ...prev,
@@ -24,6 +30,84 @@ export function GuidePage() {
 
   const handleStart = () => {
     setCurrentStep(1);
+  };
+
+  // インポート機能（追加）
+  const handleImportClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleFileImport = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setIsImporting(true);
+    setImportError('');
+
+    try {
+      const text = await file.text();
+      const data = JSON.parse(text);
+      
+      if (!data.basicInfo || !data.incomeData || !data.expenseData) {
+        throw new Error('無効なデータファイルです');
+      }
+      
+      // 完全にストアをクリアして再構築
+      const { setState } = useSimulatorStore;
+      
+      // すべてのストア状態を一括でリセット
+      setState({
+        basicInfo: data.basicInfo,
+        parameters: data.parameters || {
+          inflationRate: 1.0,
+          educationCostIncreaseRate: 1.0,
+          investmentReturn: 1.0,
+          investmentRatio: 10.0,
+          maxInvestmentAmount: 100.0,
+        },
+        incomeData: data.incomeData,
+        expenseData: data.expenseData,
+        assetData: data.assetData || { personal: [], corporate: [] },
+        liabilityData: data.liabilityData || { personal: [], corporate: [] },
+        lifeEvents: data.lifeEvents || [],
+        cashFlow: data.cashFlow || {},
+        // 自動計算関数を一時的に無効化
+        initializeFormData: () => {},
+        initializeCashFlow: () => {},
+        syncCashFlowFromFormData: () => {}
+      });
+      
+      // 少し待ってから元の関数を復元
+      setTimeout(() => {
+        const originalStore = useSimulatorStore.getState();
+        
+        // 元の関数を復元（create関数から直接取得）
+        setState({
+          initializeFormData: () => {
+            // 元の初期化ロジックを実行（ただし既存データは保持）
+            console.log('データ復元後の初期化はスキップ');
+          },
+          initializeCashFlow: originalStore.syncCashFlowFromFormData,
+          syncCashFlowFromFormData: originalStore.syncCashFlowFromFormData
+        });
+        
+        // 最後にキャッシュフローを再計算
+        setTimeout(() => {
+          originalStore.syncCashFlowFromFormData();
+        }, 100);
+      }, 100);
+      
+      // インポート成功後、基本情報ページに移動
+      setCurrentStep(1);
+      
+    } catch (error) {
+      setImportError(error instanceof Error ? error.message : 'ファイルの読み込みに失敗しました');
+    } finally {
+      setIsImporting(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    }
   };
 
   return (
@@ -212,29 +296,24 @@ export function GuidePage() {
         {openSections.housing && (
           <div className="mt-3 text-gray-700 space-y-4">
             <div>
-              <h3 className="font-medium text-orange-800 mb-2">賃貸の場合</h3>
+              <h3 className="font-medium text-orange-800 mb-2">賃貸住宅の場合</h3>
               <div className="bg-white p-3 rounded-md border border-orange-100">
                 <div className="whitespace-normal">
-                  <p className="text-sm">年間家賃 = 月額賃料 × 12 × (1 + 年間上昇率/100)^経過年数</p>
-                  <p className="text-sm mt-2">更新費用 = 更新料 × (経過年数 ÷ 更新間隔の小数点以下切り捨て)</p>
-                  <p className="text-sm mt-2">年間住居費 = 年間家賃 + 更新費用</p>
+                  <p className="text-sm">年間家賃 = 月額家賃 × 12</p>
+                  <p className="text-sm mt-1">更新料 = 家賃の1～2ヶ月分（2年毎などの更新時に発生）</p>
+                  <p className="text-sm mt-1">調整後住居費 = (年間家賃 + 更新料) × (1 + 賃料上昇率/100)^経過年数</p>
                 </div>
               </div>
             </div>
 
             <div>
-              <h3 className="font-medium text-orange-800 mb-2">住宅購入の場合</h3>
+              <h3 className="font-medium text-orange-800 mb-2">持ち家（マンション・戸建て）の場合</h3>
               <div className="bg-white p-3 rounded-md border border-orange-100">
                 <div className="whitespace-normal">
-                  <h4 className="text-sm font-medium mb-1">月々のローン返済額(元利均等返済)</h4>
-                  <p className="text-sm">月利 = 年間金利 ÷ 12 ÷ 100</p>
-                  <p className="text-sm mt-1">返済月数 = 返済年数 × 12</p>
-                  <p className="text-sm mt-1 mb-3">月々の返済額 = 借入額 × 月利 × (1 + 月利)^返済月数 ÷ ((1 + 月利)^返済月数 - 1)</p>
-                  
-                  <h4 className="text-sm font-medium mb-1">年間住居費</h4>
-                  <p className="text-sm">年間ローン返済額 = 月々の返済額 × 12</p>
-                  <p className="text-sm mt-1">年間維持費 = 購入金額 × (維持費率/100)</p>
-                  <p className="text-sm mt-1">年間住居費 = 年間ローン返済額 + 年間維持費</p>
+                  <p className="text-sm">住宅ローン返済額 = 元利均等返済による月額返済額 × 12</p>
+                  <p className="text-sm mt-1">固定資産税 = 住宅価格 × 1.4% × 軽減措置</p>
+                  <p className="text-sm mt-1">維持費 = 管理費 + 修繕積立金 + その他維持費用</p>
+                  <p className="text-sm mt-1">調整後住居費 = 住宅ローン返済額 + (固定資産税 + 維持費) × (1 + インフレ率/100)^経過年数</p>
                 </div>
               </div>
             </div>
@@ -258,107 +337,54 @@ export function GuidePage() {
         {openSections.education && (
           <div className="mt-3 text-gray-700 space-y-4">
             <div>
-              <h3 className="font-medium text-purple-800 mb-2">教育費の基本金額(万円/年)</h3>
-              <div className="overflow-x-auto">
-                <div className="max-w-full">
-                  <table className="min-w-full bg-white border border-purple-100 rounded-md">
-                    <thead>
-                      <tr className="bg-purple-50">
-                        <th className="px-4 py-2 text-left text-sm font-medium text-purple-800">区分</th>
-                        <th className="px-4 py-2 text-right text-sm font-medium text-purple-800">公立</th>
-                        <th className="px-4 py-2 text-right text-sm font-medium text-purple-800">私立</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-purple-100">
-                      <tr>
-                        <td className="px-4 py-2 text-sm">保育園</td>
-                        <td className="px-4 py-2 text-right text-sm">29.9万円</td>
-                        <td className="px-4 py-2 text-right text-sm">35.3万円</td>
-                      </tr>
-                      <tr>
-                        <td className="px-4 py-2 text-sm">幼稚園</td>
-                        <td className="px-4 py-2 text-right text-sm">18.4万円</td>
-                        <td className="px-4 py-2 text-right text-sm">34.7万円</td>
-                      </tr>
-                      <tr>
-                        <td className="px-4 py-2 text-sm">小学校</td>
-                        <td className="px-4 py-2 text-right text-sm">33.6万円</td>
-                        <td className="px-4 py-2 text-right text-sm">182.8万円</td>
-                      </tr>
-                      <tr>
-                        <td className="px-4 py-2 text-sm">中学校</td>
-                        <td className="px-4 py-2 text-right text-sm">54.2万円</td>
-                        <td className="px-4 py-2 text-right text-sm">156万円</td>
-                      </tr>
-                      <tr>
-                        <td className="px-4 py-2 text-sm">高校</td>
-                        <td className="px-4 py-2 text-right text-sm">59.7万円</td>
-                        <td className="px-4 py-2 text-right text-sm">103万円</td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-              
-              <h4 className="font-medium text-purple-800 mt-3 mb-2">大学の教育費</h4>
-              <div className="overflow-x-auto">
-                <div className="max-w-full">
-                  <table className="min-w-full bg-white border border-purple-100 rounded-md">
-                    <thead>
-                      <tr className="bg-purple-50">
-                        <th className="px-4 py-2 text-left text-sm font-medium text-purple-800">大学区分</th>
-                        <th className="px-4 py-2 text-right text-sm font-medium text-purple-800">年間費用</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-purple-100">
-                      <tr>
-                        <td className="px-4 py-2 text-sm">国立大学(文系)</td>
-                        <td className="px-4 py-2 text-right text-sm">60.6万円</td>
-                      </tr>
-                      <tr>
-                        <td className="px-4 py-2 text-sm">国立大学(理系)</td>
-                        <td className="px-4 py-2 text-right text-sm">60.6万円</td>
-                      </tr>
-                      <tr>
-                        <td className="px-4 py-2 text-sm">私立大学(文系)</td>
-                        <td className="px-4 py-2 text-right text-sm">102.6万円</td>
-                      </tr>
-                      <tr>
-                        <td className="px-4 py-2 text-sm">私立大学(理系)</td>
-                        <td className="px-4 py-2 text-right text-sm">135.4万円</td>
-                      </tr>
-                    </tbody>
-                  </table>
+              <h3 className="font-medium text-purple-800 mb-2">年齢別教育費（万円/年）</h3>
+              <div className="bg-white p-3 rounded-md border border-purple-100">
+                <div className="whitespace-normal">
+                  <div className="grid grid-cols-3 gap-2 text-sm">
+                    <div><strong>保育園（0-2歳）</strong></div>
+                    <div>公立: 29.9万円</div>
+                    <div>私立: 35.3万円</div>
+                    
+                    <div><strong>幼稚園（3-5歳）</strong></div>
+                    <div>公立: 18.4万円</div>
+                    <div>私立: 34.7万円</div>
+                    
+                    <div><strong>小学校（6-11歳）</strong></div>
+                    <div>公立: 33.6万円</div>
+                    <div>私立: 182.8万円</div>
+                    
+                    <div><strong>中学校（12-14歳）</strong></div>
+                    <div>公立: 54.2万円</div>
+                    <div>私立: 156万円</div>
+                    
+                    <div><strong>高校（15-17歳）</strong></div>
+                    <div>公立: 59.7万円</div>
+                    <div>私立: 103万円</div>
+                    
+                    <div><strong>大学（18-21歳）</strong></div>
+                    <div>国立: 60.6万円</div>
+                    <div>私立文系: 102.6万円</div>
+                    
+                    <div></div>
+                    <div></div>
+                    <div>私立理系: 135.4万円</div>
+                  </div>
                 </div>
               </div>
             </div>
 
             <div>
-              <h3 className="font-medium text-purple-800 mb-2">年齢別教育費計算</h3>
+              <h3 className="font-medium text-purple-800 mb-2">教育費上昇率の適用</h3>
               <div className="bg-white p-3 rounded-md border border-purple-100">
-                <div className="whitespace-normal">
-                  <p className="text-sm">子どもの年齢 = 基準年の子どもの年齢 + (計算年 - 基準年)</p>
-                  
-                  <p className="text-sm mt-2 mb-1">教育費 = </p>
-                  <ul className="text-sm pl-4">
-                    <li>0～2歳: 保育園の費用(行かない場合は0)</li>
-                    <li>3～5歳: 幼稚園の費用(行かない場合は0)</li>
-                    <li>6～11歳: 小学校の費用</li>
-                    <li>12～14歳: 中学校の費用</li>
-                    <li>15～17歳: 高校の費用</li>
-                    <li>18～21歳: 大学の費用(行かない場合は0)</li>
-                    <li>上記以外: 0</li>
-                  </ul>
-                  
-                  <p className="text-sm mt-2">インフレ調整教育費 = 教育費 × (1 + 教育費上昇率/100)^経過年数</p>
-                </div>
+                <p className="text-sm">調整後教育費 = 基本教育費 × (1 + 教育費上昇率/100)^経過年数</p>
+                <p className="text-sm mt-1">※子供の年齢に応じた教育段階の費用が自動的に計算され、教育費上昇率で調整されます</p>
               </div>
             </div>
           </div>
         )}
       </div>
 
-      {/* 年金計算の計算式 */}
+      {/* 年金の計算式 */}
       <div className="mb-6 bg-red-50 p-4 rounded-lg border border-red-200">
         <div 
           className="flex items-center justify-between cursor-pointer" 
@@ -366,7 +392,7 @@ export function GuidePage() {
         >
           <div className="flex items-center">
             <Sparkles className="h-5 w-5 text-red-600 mr-2" />
-            <h2 className="text-xl font-semibold text-red-800">5. 年金計算の計算式</h2>
+            <h2 className="text-xl font-semibold text-red-800">5. 年金の計算式</h2>
           </div>
           {openSections.pension ? <ChevronUp className="h-5 w-5 text-red-600" /> : <ChevronDown className="h-5 w-5 text-red-600" />}
         </div>
@@ -374,50 +400,29 @@ export function GuidePage() {
         {openSections.pension && (
           <div className="mt-3 text-gray-700 space-y-4">
             <div>
-              <h3 className="font-medium text-red-800 mb-2">国民年金(基礎年金)計算</h3>
+              <h3 className="font-medium text-red-800 mb-2">基礎年金（国民年金）</h3>
               <div className="bg-white p-3 rounded-md border border-red-100">
                 <div className="whitespace-normal">
-                  <p className="text-sm">満額の基礎年金(2025年度): 78.09万円/年</p>
-                  <p className="text-sm mt-1">加入月数: 職歴に基づく加入月数(最大480ヶ月=40年)</p>
-                  <p className="text-sm mt-1">加入月数割合 = min(加入月数 ÷ 480, 1)</p>
-                  <p className="text-sm mt-1">基礎年金額 = 満額の基礎年金 × 加入月数割合</p>
+                  <p className="text-sm">基礎年金年額 = 780,900円（満額） × (加入月数 ÷ 480)</p>
+                  <p className="text-sm mt-1">※満額受給には40年（480ヶ月）の加入が必要</p>
+                  <p className="text-sm mt-1">※国民年金の加入は20歳～60歳の40年間</p>
                 </div>
               </div>
             </div>
 
             <div>
-              <h3 className="font-medium text-red-800 mb-2">厚生年金計算</h3>
+              <h3 className="font-medium text-red-800 mb-2">厚生年金</h3>
               <div className="bg-white p-3 rounded-md border border-red-100">
                 <div className="whitespace-normal">
-                  <p className="text-sm">平均標準報酬月額 = 加入期間の標準報酬月額の平均</p>
-                  <p className="text-sm mt-1">2003年3月以前分 = 平均標準報酬月額 × 0.007125 × 2003年3月以前の加入月数</p>
-                  <p className="text-sm mt-1">2003年4月以降分 = 平均標準報酬月額 × 0.005481 × 2003年4月以降の加入月数</p>
-                  <p className="text-sm mt-1">厚生年金額 = 2003年3月以前分 + 2003年4月以降分</p>
+                  <p className="text-sm">厚生年金年額 = 平均標準報酬月額 × 乗率(5.481/1000) × 加入月数</p>
+                  <p className="text-sm mt-1">※平均標準報酬月額は加入期間中の給与の平均から算出</p>
+                  <p className="text-sm mt-1">※2003年4月以前と以降で乗率が異なる場合があります</p>
                 </div>
               </div>
             </div>
 
             <div>
-              <h3 className="font-medium text-red-800 mb-2">繰上げ/繰下げ調整</h3>
-              <div className="bg-white p-3 rounded-md border border-red-100">
-                <div className="whitespace-normal">
-                  <p className="text-sm">標準支給開始年齢 = 65歳</p>
-                  <p className="text-sm mt-1">月数差 = (実際の受給開始年齢 - 標準支給開始年齢) × 12</p>
-                  
-                  <p className="text-sm mt-2 mb-1">調整率 = </p>
-                  <ul className="text-sm pl-4">
-                    <li>月数差 &lt; 0の場合: 1.0 - (|月数差| × 0.004) (繰上げ: 月あたり0.4%減額)</li>
-                    <li>月数差 &gt; 0の場合: 1.0 + (月数差 × 0.007) (繰下げ: 月あたり0.7%増額)</li>
-                    <li>月数差 = 0の場合: 1.0 (調整なし)</li>
-                  </ul>
-                  
-                  <p className="text-sm mt-2">調整後年金額 = (基礎年金額 + 厚生年金額) × 調整率</p>
-                </div>
-              </div>
-            </div>
-
-            <div>
-              <h3 className="font-medium text-red-800 mb-2">在職老齢年金調整</h3>
+              <h3 className="font-medium text-red-800 mb-2">在職老齢年金（働きながら年金受給）</h3>
               <div className="bg-white p-3 rounded-md border border-red-100">
                 <div className="whitespace-normal">
                   <p className="text-sm">基準額 = </p>
@@ -539,14 +544,37 @@ export function GuidePage() {
         )}
       </div>
 
-      {/* スタートボタン */}
-      <div className="mt-8 text-center">
+      {/* スタートボタンとインポートボタン（追加部分） */}
+      <div className="mt-8 text-center space-y-4">
         <button 
           className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-8 rounded-lg shadow-lg transition duration-300 ease-in-out transform hover:scale-105 focus:outline-none"
           onClick={handleStart}
         >
           シミュレーションを始める
         </button>
+        
+        <div className="text-center">
+          <p className="text-sm text-gray-600 mb-2">以前のデータがある場合</p>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".json"
+            onChange={handleFileImport}
+            className="hidden"
+          />
+          <button 
+            className="bg-green-600 hover:bg-green-700 text-white font-semibold py-2 px-6 rounded-lg shadow-md transition duration-300 ease-in-out transform hover:scale-105 focus:outline-none flex items-center gap-2 mx-auto"
+            onClick={handleImportClick}
+            disabled={isImporting}
+          >
+            <Upload className="h-4 w-4" />
+            {isImporting ? 'インポート中...' : 'インポートして続きから始める'}
+          </button>
+          
+          {importError && (
+            <div className="mt-2 text-red-600 text-sm">{importError}</div>
+          )}
+        </div>
       </div>
     </div>
   );

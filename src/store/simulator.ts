@@ -315,8 +315,8 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
       { id: '2', name: '事業収入', type: 'profit', category: 'income', amounts: {}, investmentRatio: 10, maxInvestmentAmount: 100 },
       { id: '3', name: '副業収入', type: 'side', category: 'income', amounts: {}, investmentRatio: 10, maxInvestmentAmount: 100 },
       { id: '4', name: '配偶者収入', type: 'income', category: 'income', amounts: {}, investmentRatio: 10, maxInvestmentAmount: 100 },
-      { id: '5', name: '年金収入', type: 'income', category: 'income', amounts: {}, investmentRatio: 5, maxInvestmentAmount: 50 },
-      { id: '6', name: '配偶者年金収入', type: 'income', category: 'income', amounts: {}, investmentRatio: 5, maxInvestmentAmount: 50 },
+      { id: '5', name: '年金収入', type: 'income', category: 'income', amounts: {}, investmentRatio: 5, maxInvestmentAmount: 50, isAutoCalculated: true },
+      { id: '6', name: '配偶者年金収入', type: 'income', category: 'income', amounts: {}, investmentRatio: 5, maxInvestmentAmount: 50, isAutoCalculated: true },
       { id: '7', name: '運用収益', type: 'income', category: 'income', amounts: {}, investmentRatio: 0, maxInvestmentAmount: 0 },
     ],
     corporate: [
@@ -502,7 +502,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
     get().initializeCashFlow();
   },
 
-  // **完全修正版: syncCashFlowFromFormData**
+  // **完全修正版: syncCashFlowFromFormData - 年金計算機能付き**
   syncCashFlowFromFormData: () => {
     try {
       const state = get();
@@ -565,6 +565,57 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
           corporateInvestmentAssets += initialAmount;
         }
       });
+
+      // **年金計算を実行** - ヘルパー関数
+      const findPersonalItem = (name: string) => incomeData.personal.find(i => i.name === name);
+      
+      // 年金関連項目を取得
+      const pensionItem = findPersonalItem('年金収入');
+      const spousePensionItem = findPersonalItem('配偶者年金収入');
+
+      // 年金計算を実行
+      if (pensionItem && pensionItem.isAutoCalculated) {
+        years.forEach(year => {
+          const yearsSinceStart = year - basicInfo.startYear;
+          const age = basicInfo.currentAge + yearsSinceStart;
+          
+          if (age >= (basicInfo.pensionStartAge || 65)) {
+            const calculatedPensionIncome = calculatePensionForYear(basicInfo, incomeData, year);
+            pensionItem.amounts[year] = calculatedPensionIncome;
+          } else {
+            pensionItem.amounts[year] = 0;
+          }
+        });
+      }
+
+      // 配偶者年金の計算
+      if (spousePensionItem && spousePensionItem.isAutoCalculated && basicInfo.maritalStatus !== 'single') {
+        years.forEach(year => {
+          const yearsSinceStart = year - basicInfo.startYear;
+          let spouseAge = 0;
+          
+          if (basicInfo.maritalStatus === 'married' && basicInfo.spouseInfo?.currentAge) {
+            spouseAge = basicInfo.spouseInfo.currentAge + yearsSinceStart;
+          } else if (basicInfo.maritalStatus === 'planning' && basicInfo.spouseInfo?.marriageAge && basicInfo.spouseInfo?.age) {
+            const marriageYear = basicInfo.startYear + (basicInfo.spouseInfo.marriageAge - basicInfo.currentAge);
+            
+            if (year < marriageYear) {
+              spousePensionItem.amounts[year] = 0;
+              return;
+            }
+            
+            const ageAtMarriage = basicInfo.spouseInfo.age;
+            spouseAge = ageAtMarriage + (year - marriageYear);
+          }
+          
+          if (spouseAge >= (basicInfo.spouseInfo?.pensionStartAge || 65)) {
+            const calculatedSpousePensionIncome = calculateSpousePensionForYear(basicInfo, incomeData, year);
+            spousePensionItem.amounts[year] = calculatedSpousePensionIncome;
+          } else {
+            spousePensionItem.amounts[year] = 0;
+          }
+        });
+      }
 
       years.forEach((year, yearIndex) => {
         // === 1. 収入計算 ===

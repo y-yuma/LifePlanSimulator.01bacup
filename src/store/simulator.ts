@@ -297,12 +297,12 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
   },
   // **修正**: parameters に incomeInvestmentReturn を追加
   parameters: {
-    inflationRate: 1.0,
-    educationCostIncreaseRate: 1.0,
-    investmentReturn: 5.0, // デフォルト値を5.0に変更
-    investmentRatio: 10.0,
-    maxInvestmentAmount: 100.0,
-    incomeInvestmentReturn: 5.0, // **追加**: 収入からの投資運用利回り
+    inflationRate: 0,
+    educationCostIncreaseRate: 0,
+    investmentReturn: 0, // デフォルト値を5.0に変更
+    investmentRatio: 0,
+    maxInvestmentAmount: 0,
+    incomeInvestmentReturn: 0, // **追加**: 収入からの投資運用利回り
   },
   cashFlow: {},
   history: [],
@@ -1028,8 +1028,8 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
           type: 'income', 
           category: 'income',
           amounts: {}, 
-          investmentRatio: parameters.investmentRatio || 10,
-          maxInvestmentAmount: parameters.maxInvestmentAmount || 100
+          investmentRatio: parameters.investmentRatio || 0,
+          maxInvestmentAmount: parameters.maxInvestmentAmount || 0
         },
         { 
           id: '2', 
@@ -1037,8 +1037,8 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
           type: 'profit', 
           category: 'income',
           amounts: {}, 
-          investmentRatio: parameters.investmentRatio || 10,
-          maxInvestmentAmount: parameters.maxInvestmentAmount || 100
+          investmentRatio: parameters.investmentRatio || 0,
+          maxInvestmentAmount: parameters.maxInvestmentAmount || 0
         },
         { 
           id: '3', 
@@ -1046,8 +1046,8 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
           type: 'side', 
           category: 'income',
           amounts: {}, 
-          investmentRatio: parameters.investmentRatio || 10,
-          maxInvestmentAmount: parameters.maxInvestmentAmount || 100
+          investmentRatio: parameters.investmentRatio || 0,
+          maxInvestmentAmount: parameters.maxInvestmentAmount || 0
         },
         { 
           id: '4', 
@@ -1055,8 +1055,8 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
           type: 'income', 
           category: 'income',
           amounts: {}, 
-          investmentRatio: parameters.investmentRatio || 5,
-          maxInvestmentAmount: parameters.maxInvestmentAmount || 50,
+          investmentRatio: parameters.investmentRatio || 0,
+          maxInvestmentAmount: parameters.maxInvestmentAmount || 0,
           isAutoCalculated: true
         },
       ],
@@ -1067,8 +1067,8 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
           type: 'income', 
           category: 'income',
           amounts: {}, 
-          investmentRatio: parameters.investmentRatio || 10,
-          maxInvestmentAmount: parameters.maxInvestmentAmount || 100
+          investmentRatio: parameters.investmentRatio || 0,
+          maxInvestmentAmount: parameters.maxInvestmentAmount || 0
         },
         { 
           id: '2', 
@@ -1076,8 +1076,8 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
           type: 'income', 
           category: 'income',
           amounts: {}, 
-          investmentRatio: parameters.investmentRatio || 10,
-          maxInvestmentAmount: parameters.maxInvestmentAmount || 100
+          investmentRatio: parameters.investmentRatio || 0,
+          maxInvestmentAmount: parameters.maxInvestmentAmount || 0
         },
       ],
     };

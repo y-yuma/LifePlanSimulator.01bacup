@@ -23,6 +23,7 @@ interface CostSettings {
   costRatio: number; // 売上に対する原価率（%）
   costIncreaseRate: number; // 原価上昇率（%）
   maxCostAmount?: number; // 原価上限値（万円）
+  targetIncomeIds?: string[]; // 参照する収入項目のIDリスト
 }
 
 // 自動入力モーダル用のインターフェース
@@ -52,19 +53,32 @@ const CostSettingsModal: React.FC<CostSettingsModalProps> = ({
   initialSettings,
   itemName
 }) => {
+  const { incomeData } = useSimulatorStore();
+  
   const [settings, setSettings] = useState<CostSettings>(
     initialSettings || {
       costRatio: 60, // デフォルト60%
       costIncreaseRate: 1.0, // デフォルト1%
       maxCostAmount: undefined,
+      targetIncomeIds: [], // デフォルトは空配列
     }
   );
 
   if (!isOpen) return null;
 
+  const toggleIncomeSelection = (incomeId: string) => {
+    const currentIds = settings.targetIncomeIds || [];
+    setSettings({
+      ...settings,
+      targetIncomeIds: currentIds.includes(incomeId)
+        ? currentIds.filter(id => id !== incomeId)
+        : [...currentIds, incomeId]
+    });
+  };
+
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-lg p-6 w-full max-w-md">
+      <div className="bg-white rounded-lg p-6 w-full max-w-lg">
         <div className="flex justify-between items-center mb-4">
           <h3 className="text-lg font-bold">{itemName} 原価設定</h3>
           <button onClick={onClose} className="text-gray-500 hover:text-gray-700">
@@ -73,6 +87,31 @@ const CostSettingsModal: React.FC<CostSettingsModalProps> = ({
         </div>
 
         <div className="space-y-4">
+          {/* 参照する収入項目の選択 */}
+          <div className="space-y-2">
+            <label className="text-sm font-medium">原価計算対象の収入項目を選択</label>
+            <div className="max-h-32 overflow-y-auto border border-gray-200 rounded-md p-2 space-y-1">
+              {incomeData.corporate.length > 0 ? (
+                incomeData.corporate.map(item => (
+                  <label key={item.id} className="flex items-center space-x-2 cursor-pointer hover:bg-gray-50 p-1 rounded">
+                    <input
+                      type="checkbox"
+                      checked={(settings.targetIncomeIds || []).includes(item.id)}
+                      onChange={() => toggleIncomeSelection(item.id)}
+                      className="rounded"
+                    />
+                    <span className="text-sm">{item.name || '無名の収入項目'}</span>
+                  </label>
+                ))
+              ) : (
+                <p className="text-sm text-gray-500">法人収入項目がありません</p>
+              )}
+            </div>
+            <p className="text-xs text-gray-500">
+              選択された項目の合計売上に対して原価率が適用されます。複数選択可能です。
+            </p>
+          </div>
+
           <div className="space-y-2">
             <label className="text-sm font-medium">売上に対する原価率（%）</label>
             <input
@@ -86,7 +125,7 @@ const CostSettingsModal: React.FC<CostSettingsModalProps> = ({
               placeholder="60"
             />
             <p className="text-xs text-gray-500">
-              売上の何%を原価として計算するかを設定します（例：60%なら売上1000万円に対して原価600万円）
+              選択した売上の何%を原価として計算するかを設定します（例：60%なら売上1000万円に対して原価600万円）
             </p>
           </div>
 
@@ -127,7 +166,7 @@ const CostSettingsModal: React.FC<CostSettingsModalProps> = ({
           <div className="bg-blue-50 p-3 rounded-md">
             <h4 className="text-sm font-medium text-blue-800 mb-1">計算例</h4>
             <p className="text-xs text-blue-700">
-              売上1000万円、原価率60%、上昇率1%の場合：<br/>
+              選択した売上合計1000万円、原価率60%、上昇率1%の場合：<br/>
               1年目: 1000万円 × 60% = 600万円<br/>
               2年目: 1000万円 × 61% = 610万円<br/>
               3年目: 1000万円 × 62% = 620万円
@@ -321,6 +360,28 @@ export function ExpenseForm() {
     (_, i) => basicInfo.startYear + i
   );
 
+  // 初期化：法人経費にデフォルトの法人原価行を追加
+  React.useEffect(() => {
+    const hasDefaultCostItem = expenseData.corporate.some(item => 
+      item.name === '法人原価' && item.category === 'cost'
+    );
+    
+    if (!hasDefaultCostItem) {
+      const defaultCostItem = {
+        id: `corporate_cost_default_${Date.now()}`,
+        name: '法人原価',
+        category: 'cost',
+        amounts: {} as {[year: number]: number},
+        _rawAmounts: {} as {[year: number]: number}
+      };
+
+      setExpenseData({
+        ...expenseData,
+        corporate: [...expenseData.corporate, defaultCostItem]
+      });
+    }
+  }, []);
+
   // 自動入力モーダルを開く
   const openAutofillModal = (itemId: string, section: 'personal' | 'corporate') => {
     setCurrentItemId(itemId);
@@ -343,9 +404,6 @@ export function ExpenseForm() {
       [currentItemId]: settings
     });
 
-    // 法人の売上データを取得
-    const corporateRevenue = incomeData.corporate;
-    
     // 各年の原価を計算
     const newAmounts: {[year: number]: number} = {};
     const newRawAmounts: {[year: number]: number} = {};
@@ -353,11 +411,22 @@ export function ExpenseForm() {
     years.forEach(year => {
       const yearsSinceStart = year - basicInfo.startYear;
       
-      // その年の法人売上合計を計算
+      // 選択された収入項目の合計を計算（修正点）
       let totalRevenue = 0;
-      corporateRevenue.forEach(revenueItem => {
-        totalRevenue += revenueItem.amounts[year] || 0;
-      });
+      if (settings.targetIncomeIds && settings.targetIncomeIds.length > 0) {
+        // 選択された項目のみの合計
+        settings.targetIncomeIds.forEach(incomeId => {
+          const incomeItem = incomeData.corporate.find(item => item.id === incomeId);
+          if (incomeItem) {
+            totalRevenue += incomeItem.amounts[year] || 0;
+          }
+        });
+      } else {
+        // 選択項目がない場合は従来通り法人収入全体の合計
+        incomeData.corporate.forEach(revenueItem => {
+          totalRevenue += revenueItem.amounts[year] || 0;
+        });
+      }
       
       // 原価率を上昇率で調整
       const adjustedCostRatio = settings.costRatio + (settings.costIncreaseRate * yearsSinceStart);

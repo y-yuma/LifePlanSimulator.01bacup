@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useSimulatorStore } from '@/store/simulator';
-import { Plus, Trash2, Info, Wand2, X } from 'lucide-react';
+import { Plus, Trash2, Info, Wand2, X, Settings } from 'lucide-react';
 import { 
   CategorySelect, 
   EXPENSE_CATEGORIES,
@@ -18,6 +18,13 @@ interface AutofillSettings {
   maxAmount?: number; // 上限値を追加
 }
 
+// 原価設定のインターフェース
+interface CostSettings {
+  costRatio: number; // 売上に対する原価率（%）
+  costIncreaseRate: number; // 原価上昇率（%）
+  maxCostAmount?: number; // 原価上限値（万円）
+}
+
 // 自動入力モーダル用のインターフェース
 interface AutofillModalProps {
   isOpen: boolean;
@@ -27,6 +34,125 @@ interface AutofillModalProps {
   itemName: string;
   category: string; // カテゴリ情報を追加
 }
+
+// 原価設定モーダル用のインターフェース
+interface CostSettingsModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  onApply: (settings: CostSettings) => void;
+  initialSettings?: CostSettings;
+  itemName: string;
+}
+
+// 原価設定モーダルコンポーネント
+const CostSettingsModal: React.FC<CostSettingsModalProps> = ({
+  isOpen,
+  onClose,
+  onApply,
+  initialSettings,
+  itemName
+}) => {
+  const [settings, setSettings] = useState<CostSettings>(
+    initialSettings || {
+      costRatio: 60, // デフォルト60%
+      costIncreaseRate: 1.0, // デフォルト1%
+      maxCostAmount: undefined,
+    }
+  );
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+      <div className="bg-white rounded-lg p-6 w-full max-w-md">
+        <div className="flex justify-between items-center mb-4">
+          <h3 className="text-lg font-bold">{itemName} 原価設定</h3>
+          <button onClick={onClose} className="text-gray-500 hover:text-gray-700">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <div className="space-y-4">
+          <div className="space-y-2">
+            <label className="text-sm font-medium">売上に対する原価率（%）</label>
+            <input
+              type="number"
+              min="0"
+              max="100"
+              step="0.1"
+              value={settings.costRatio}
+              onChange={(e) => setSettings({ ...settings, costRatio: Number(e.target.value) })}
+              className="w-full border border-gray-300 rounded-md px-3 py-2"
+              placeholder="60"
+            />
+            <p className="text-xs text-gray-500">
+              売上の何%を原価として計算するかを設定します（例：60%なら売上1000万円に対して原価600万円）
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-sm font-medium">原価上昇率（%/年）</label>
+            <input
+              type="number"
+              min="0"
+              step="0.1"
+              value={settings.costIncreaseRate}
+              onChange={(e) => setSettings({ ...settings, costIncreaseRate: Number(e.target.value) })}
+              className="w-full border border-gray-300 rounded-md px-3 py-2"
+              placeholder="1.0"
+            />
+            <p className="text-xs text-gray-500">
+              原価率が毎年上昇する割合を設定します（例：1%なら原価率が毎年1%ずつ上昇）
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-sm font-medium">原価上限値（万円/年）（オプション）</label>
+            <input
+              type="number"
+              min="0"
+              value={settings.maxCostAmount || ''}
+              onChange={(e) => setSettings({ 
+                ...settings, 
+                maxCostAmount: e.target.value ? Number(e.target.value) : undefined 
+              })}
+              className="w-full border border-gray-300 rounded-md px-3 py-2"
+              placeholder="未設定"
+            />
+            <p className="text-xs text-gray-500">
+              原価の年間上限額を設定できます。計算結果がこの値を超えた場合、この上限が適用されます
+            </p>
+          </div>
+
+          <div className="bg-blue-50 p-3 rounded-md">
+            <h4 className="text-sm font-medium text-blue-800 mb-1">計算例</h4>
+            <p className="text-xs text-blue-700">
+              売上1000万円、原価率60%、上昇率1%の場合：<br/>
+              1年目: 1000万円 × 60% = 600万円<br/>
+              2年目: 1000万円 × 61% = 610万円<br/>
+              3年目: 1000万円 × 62% = 620万円
+            </p>
+          </div>
+        </div>
+
+        <div className="flex justify-end space-x-3 mt-6">
+          <button
+            onClick={onClose}
+            className="px-4 py-2 bg-gray-300 text-gray-700 rounded-md hover:bg-gray-400"
+          >
+            キャンセル
+          </button>
+          <button
+            onClick={() => onApply(settings)}
+            className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600"
+          >
+            適用
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 // 自動入力モーダルコンポーネント
 const AutofillModal: React.FC<AutofillModalProps> = ({
@@ -164,7 +290,8 @@ export function ExpenseForm() {
     setParameters,
     setCurrentStep,
     expenseData,
-    setExpenseData
+    setExpenseData,
+    incomeData
   } = useSimulatorStore();
 
   // 自動入力モーダルの状態
@@ -172,6 +299,10 @@ export function ExpenseForm() {
   const [currentItemId, setCurrentItemId] = useState('');
   const [currentSection, setCurrentSection] = useState<'personal' | 'corporate'>('personal');
   const [autofillSettings, setAutofillSettings] = useState<{[key: string]: AutofillSettings}>({});
+
+  // 原価設定モーダルの状態
+  const [costSettingsModalOpen, setCostSettingsModalOpen] = useState(false);
+  const [costSettings, setCostSettings] = useState<{[key: string]: CostSettings}>({});
 
   // 上昇率の編集モード状態
   const [editingRates, setEditingRates] = useState({
@@ -195,6 +326,71 @@ export function ExpenseForm() {
     setCurrentItemId(itemId);
     setCurrentSection(section);
     setAutofillModalOpen(true);
+  };
+
+  // 原価設定モーダルを開く
+  const openCostSettingsModal = (itemId: string, section: 'personal' | 'corporate') => {
+    setCurrentItemId(itemId);
+    setCurrentSection(section);
+    setCostSettingsModalOpen(true);
+  };
+
+  // 原価設定の適用
+  const applyCostSettings = (settings: CostSettings) => {
+    // 設定を保存
+    setCostSettings({
+      ...costSettings,
+      [currentItemId]: settings
+    });
+
+    // 法人の売上データを取得
+    const corporateRevenue = incomeData.corporate;
+    
+    // 各年の原価を計算
+    const newAmounts: {[year: number]: number} = {};
+    const newRawAmounts: {[year: number]: number} = {};
+    
+    years.forEach(year => {
+      const yearsSinceStart = year - basicInfo.startYear;
+      
+      // その年の法人売上合計を計算
+      let totalRevenue = 0;
+      corporateRevenue.forEach(revenueItem => {
+        totalRevenue += revenueItem.amounts[year] || 0;
+      });
+      
+      // 原価率を上昇率で調整
+      const adjustedCostRatio = settings.costRatio + (settings.costIncreaseRate * yearsSinceStart);
+      
+      // 原価を計算
+      let costAmount = totalRevenue * (adjustedCostRatio / 100);
+      
+      // 上限値の適用
+      if (settings.maxCostAmount && costAmount > settings.maxCostAmount) {
+        costAmount = settings.maxCostAmount;
+      }
+      
+      newRawAmounts[year] = costAmount;
+      newAmounts[year] = Math.floor(costAmount);
+    });
+    
+    // 経費データを更新
+    setExpenseData({
+      ...expenseData,
+      [currentSection]: expenseData[currentSection].map(i => {
+        if (i.id === currentItemId) {
+          return {
+            ...i,
+            amounts: {...i.amounts, ...newAmounts},
+            _rawAmounts: {...i._rawAmounts, ...newRawAmounts},
+            _costSettings: settings // 原価設定を保存
+          };
+        }
+        return i;
+      })
+    });
+    
+    setCostSettingsModalOpen(false);
   };
 
   // 自動入力設定を適用する（上限値制限機能付き）
@@ -433,22 +629,24 @@ export function ExpenseForm() {
                     <TermTooltip term="" width="narrow">
                       {section === 'personal' 
                         ? '支出の分類です。生活費/住居費/教育費/その他から選択できます。' 
-                        : '支出の分類です。事業運営費/オフィス・設備費/その他から選択できます。'}
+                        : '支出の分類です。事業運営費/オフィス・設備費/法人原価/その他から選択できます。「法人原価」を選択すると売上に比例した原価を設定できます。'}
                     </TermTooltip>
                   </div>
                 </th>
                 <th className="px-4 py-2 text-center text-sm font-medium text-gray-500 w-[100px] min-w-[100px]">
                   上昇率
                   <TermTooltip term="" width="narrow">
-                    カテゴリに応じた上昇率です。生活費・住居費・事業運営費・オフィス設備費はインフレ率、教育費は教育費上昇率が適用されます。その他カテゴリは上昇率適用なしです。
+                    カテゴリに応じた上昇率です。生活費・住居費・事業運営費・オフィス設備費はインフレ率、教育費は教育費上昇率、法人原価は独立した上昇率が適用されます。その他カテゴリは上昇率適用なしです。
                   </TermTooltip>
                 </th>
                 {/* 自動入力ボタン列を追加 */}
                 <th className="px-4 py-2 text-center text-sm font-medium text-gray-500 w-[80px] min-w-[80px]">
                   <div className="flex items-center justify-center">
-                    <span>自動入力</span>
+                    <span>設定</span>
                     <TermTooltip term="" width="narrow">
-                      初期費用、終了年齢、上限値を設定して、経費を自動入力します。金額には適切な上昇率が自動的に適用されます。
+                      {section === 'personal' 
+                        ? '初期費用、終了年齢、上限値を設定して経費を自動入力します。'
+                        : '法人原価は売上比例設定、その他は自動入力設定ができます。'}
                     </TermTooltip>
                   </div>
                 </th>
@@ -482,7 +680,9 @@ export function ExpenseForm() {
                   </td>
                   <td className="px-4 py-2 text-center">
                     <div className="flex items-center justify-center">
-                      {item.category === 'education' ? (
+                      {item.category === 'cost' ? (
+                        <span className="text-xs text-green-600">個別設定</span>
+                      ) : item.category === 'education' ? (
                         editingRates.education ? (
                           <input
                             type="number"
@@ -512,16 +712,27 @@ export function ExpenseForm() {
                       )}
                     </div>
                   </td>
-                  {/* 自動入力ボタン列 */}
+                  {/* 設定ボタン列 */}
                   <td className="px-4 py-2 text-center">
-                    <button
-                      type="button"
-                      onClick={() => openAutofillModal(item.id, section)}
-                      className="inline-flex items-center px-2 py-1 text-xs bg-purple-100 text-purple-800 rounded hover:bg-purple-200"
-                    >
-                      <Wand2 className="h-3 w-3 mr-1" />
-                      <span>設定</span>
-                    </button>
+                    {item.category === 'cost' ? (
+                      <button
+                        type="button"
+                        onClick={() => openCostSettingsModal(item.id, section)}
+                        className="inline-flex items-center px-2 py-1 text-xs bg-green-100 text-green-800 rounded hover:bg-green-200"
+                      >
+                        <Settings className="h-3 w-3 mr-1" />
+                        <span>原価</span>
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => openAutofillModal(item.id, section)}
+                        className="inline-flex items-center px-2 py-1 text-xs bg-purple-100 text-purple-800 rounded hover:bg-purple-200"
+                      >
+                        <Wand2 className="h-3 w-3 mr-1" />
+                        <span>設定</span>
+                      </button>
+                    )}
                   </td>
                   {years.map(year => (
                     <td key={year} className="px-4 py-2">
@@ -529,7 +740,12 @@ export function ExpenseForm() {
                         type="number"
                         value={item.amounts[year] || ''}
                         onChange={(e) => handleAmountChange(section, item.id, year, Number(e.target.value))}
-                        className="w-full text-right rounded-md border border-gray-200 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        disabled={item.category === 'cost' && item._costSettings} // 原価設定済みの場合は手動入力を無効化
+                        className={`w-full text-right rounded-md border text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
+                          item.category === 'cost' && item._costSettings 
+                            ? 'bg-green-50 border-green-200 text-green-800' 
+                            : 'border-gray-200'
+                        }`}
                         placeholder="0"
                       />
                     </td>
@@ -580,10 +796,28 @@ export function ExpenseForm() {
         </h3>
         <p className="text-sm text-blue-700">
           個人と法人の支出を別々に管理します。個人経費は「生活費」「住居費」「教育費」「その他」のカテゴリに、
-          法人経費は「事業運営費」「オフィス・設備費」「その他」のカテゴリに分けて入力することができます。
-          入力した値には自動的にパラメータで設定したインフレ率（生活費・住居費・事業運営費・オフィス・設備費）や教育費上昇率（教育費）が適用されます。
-          「その他」カテゴリには上昇率は適用されません。
+          法人経費は「事業運営費」「オフィス・設備費」「法人原価」「その他」のカテゴリに分けて入力することができます。
+          「法人原価」は売上に応じて自動計算され、独立した上昇率を設定できます。
+          その他のカテゴリには自動的にパラメータで設定したインフレ率や教育費上昇率が適用されます。
         </p>
+      </div>
+
+      {/* 法人原価について */}
+      <div className="bg-green-50 p-4 rounded-md mb-4">
+        <h3 className="text-md font-medium text-green-800 mb-2 flex items-center">
+          <Settings className="h-4 w-4 mr-2" />
+          <span>法人原価機能について</span>
+        </h3>
+        <div className="text-sm text-green-700 space-y-2">
+          <p><strong>特徴：</strong></p>
+          <ul className="list-disc pl-4 space-y-1">
+            <li>売上に対する割合（%）で原価を自動計算</li>
+            <li>原価率の年間上昇率を個別に設定可能</li>
+            <li>原価の上限値を設定可能（オプション）</li>
+            <li>売上がない年は原価も0になります</li>
+          </ul>
+          <p><strong>使用例：</strong> 製造業や小売業など、売上に比例して材料費や仕入れ原価が発生する事業</p>
+        </div>
       </div>
 
       <div className="bg-purple-50 p-4 rounded-md mb-4">
@@ -613,6 +847,7 @@ export function ExpenseForm() {
           <ul className="list-disc pl-4 space-y-1">
             <li>生活費・住居費・事業運営費・オフィス・設備費: インフレ率（{parameters.inflationRate}%）を適用</li>
             <li>教育費: 教育費上昇率（{parameters.educationCostIncreaseRate}%）を適用</li>
+            <li>法人原価: 独立した上昇率設定が可能</li>
             <li>その他: 上昇率適用なし（入力値がそのまま使用されます）</li>
           </ul>
         </div>
@@ -711,6 +946,17 @@ export function ExpenseForm() {
         }
         category={
           expenseData[currentSection].find(i => i.id === currentItemId)?.category || 'other'
+        }
+      />
+
+      {/* 原価設定モーダル */}
+      <CostSettingsModal
+        isOpen={costSettingsModalOpen}
+        onClose={() => setCostSettingsModalOpen(false)}
+        onApply={applyCostSettings}
+        initialSettings={costSettings[currentItemId] ? costSettings[currentItemId] : undefined}
+        itemName={
+          expenseData[currentSection].find(i => i.id === currentItemId)?.name || '原価'
         }
       />
 

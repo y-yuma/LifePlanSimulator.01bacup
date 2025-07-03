@@ -99,11 +99,11 @@ export function CashFlowForm() {
     corporateLiability: true,
   });
 
-  // カテゴリ表示管理の状態
+ // カテゴリ表示管理の状態
   const [categoryVisibility, setCategoryVisibility] = useState({
     income: { income: true, other: true },
     expense: { living: true, housing: true, education: true, other: true },
-    corporateExpense: { business: true, office: true, other: true },
+    corporateExpense: { business: true, office: true, cost: true, other: true }, // 法人原価カテゴリを追加
     asset: { asset: true, other: true },
     liability: { liability: true, other: true }
   });
@@ -380,6 +380,7 @@ export function CashFlowForm() {
       'education': '#9C27B0',  // 紫
       'business': '#2196F3',   // 青
       'office': '#00BCD4',     // 水色
+      'cost': '#FF5722',       // 深いオレンジ（法人原価）
       'asset': '#2196F3',      // 青
       'liability': '#9C27B0',  // 紫
       'other': '#9E9E9E',      // グレー
@@ -1171,101 +1172,113 @@ const renderCorporateTable = () => {
               </td>
             </tr>
             
-            {expandedSections.corporateExpense && (
-              <>
-                {/* 事業運営費 */}
-                <tr className="bg-gray-100">
-                  <td colSpan={years.length + 1} className="px-2 py-1 font-medium text-gray-700 text-xs">
-                    <div className="flex items-center">
-                      <span className="w-2 h-2 rounded-full mr-1" style={{ backgroundColor: getCategoryColor('business') }}></span>
-                      事業運営費 <span className="text-xs text-blue-600 ml-1">（インフレ率: {parameters.inflationRate}%）</span>
-                    </div>
-                  </td>
-                </tr>
-                {getItemsByCategory('corporate', 'expense', 'business').map(item => (
-                  <tr key={item.id}>
-                    <td className="px-2 py-1 text-xs text-gray-900 sticky left-0 bg-white">
-                      <div className="flex items-center">
-                        <span className="w-1.5 h-1.5 rounded-full mr-1" style={{ backgroundColor: getCategoryColor('business') }}></span>
-                        {item.name}（万円）
-                      </div>
-                    </td>
-                    {years.map(year => (
-                      <td key={year} className="px-1 py-1 text-right text-xs">
-                        <input
-                          type="number"
-                          value={item.amounts[year] || ''}
-                          onChange={(e) => {
-                            const value = e.target.value === '' ? 0 : Number(e.target.value);
-                            if (!isNaN(value)) {
-                              handleExpenseChange('corporate', item.id, year, value);
-                            }
-                          }}
-                          onBlur={(e) => {
-                            const value = e.target.value === '' ? 0 : Number(e.target.value);
-                            if (!isNaN(value)) {
-                              handleExpenseBlur('corporate', item.id, year, value);
-                            }
-                          }}
-                          className={inputStyle}
-                        />
-                        {item._rawAmounts && item._rawAmounts[year] !== undefined && 
-                        item._rawAmounts[year] !== item.amounts[year] && (
-                          <div className="text-xs text-gray-500 mt-1">
-                            元の値: {item._rawAmounts[year]}万円
-                          </div>
-                        )}
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-                
-                {/* オフィス・設備費 */}
-                <tr className="bg-gray-100">
-                  <td colSpan={years.length + 1} className="px-2 py-1 font-medium text-gray-700 text-xs">
-                    <div className="flex items-center">
-                      <span className="w-2 h-2 rounded-full mr-1" style={{ backgroundColor: getCategoryColor('office') }}></span>
-                      オフィス・設備費 <span className="text-xs text-blue-600 ml-1">（インフレ率: {parameters.inflationRate}%）</span>
-                    </div>
-                  </td>
-                </tr>
-                {getItemsByCategory('corporate', 'expense', 'office').map(item => (
-                  <tr key={item.id}>
-                    <td className="px-2 py-1 text-xs text-gray-900 sticky left-0 bg-white">
-                      <div className="flex items-center">
-                        <span className="w-1.5 h-1.5 rounded-full mr-1" style={{ backgroundColor: getCategoryColor('office') }}></span>
-                        {item.name}（万円）
-                      </div>
-                    </td>
-                    {years.map(year => (
-                      <td key={year} className="px-1 py-1 text-right text-xs">
-                        <input
-                          type="number"
-                          value={item.amounts[year] || ''}
-                          onChange={(e) => {
-                            const value = e.target.value === '' ? 0 : Number(e.target.value);
-                            if (!isNaN(value)) {
-                              handleExpenseChange('corporate', item.id, year, value);
-                            }
-                          }}
-                          onBlur={(e) => {
-                            const value = e.target.value === '' ? 0 : Number(e.target.value);
-                            if (!isNaN(value)) {
-                              handleExpenseBlur('corporate', item.id, year, value);
-                            }
-                          }}
-                          className={inputStyle}
-                        />
-                        {item._rawAmounts && item._rawAmounts[year] !== undefined && 
-                        item._rawAmounts[year] !== item.amounts[year] && (
-                          <div className="text-xs text-gray-500 mt-1">
-                            元の値: {item._rawAmounts[year]}万円
-                          </div>
-                        )}
-                      </td>
-                    ))}
-                  </tr>
-                ))}
+       {expandedSections.corporateExpense && (
+    <>
+      {/* 事業運営費 */}
+      <tr className="bg-gray-100">
+        <td colSpan={years.length + 1} className="px-2 py-1 font-medium text-gray-700 text-xs">
+          <div className="flex items-center">
+            <span className="w-2 h-2 rounded-full mr-1" style={{ backgroundColor: getCategoryColor('business') }}></span>
+            事業運営費 <span className="text-xs text-blue-600 ml-1">（インフレ率: {parameters.inflationRate}%）</span>
+          </div>
+        </td>
+      </tr>
+      {getItemsByCategory('corporate', 'expense', 'business').map(item => (
+        <tr key={item.id}>
+          <td className="px-2 py-1 text-xs text-gray-900 sticky left-0 bg-white">
+            <div className="flex items-center">
+              <span className="w-1.5 h-1.5 rounded-full mr-1" style={{ backgroundColor: getCategoryColor('business') }}></span>
+              {item.name}（万円）
+            </div>
+          </td>
+          {years.map(year => (
+            <td key={year} className="px-1 py-1 text-right text-xs">
+              <input
+                type="number"
+                value={item.amounts[year] || ''}
+                onChange={(e) => {
+                  const value = e.target.value === '' ? 0 : Number(e.target.value);
+                  if (!isNaN(value)) {
+                    handleExpenseChange('corporate', item.id, year, value);
+                  }
+                }}
+                className={inputStyle}
+              />
+            </td>
+          ))}
+        </tr>
+      ))}
+
+      {/* オフィス・設備費 */}
+      <tr className="bg-gray-100">
+        <td colSpan={years.length + 1} className="px-2 py-1 font-medium text-gray-700 text-xs">
+          <div className="flex items-center">
+            <span className="w-2 h-2 rounded-full mr-1" style={{ backgroundColor: getCategoryColor('office') }}></span>
+            オフィス・設備費 <span className="text-xs text-blue-600 ml-1">（インフレ率: {parameters.inflationRate}%）</span>
+          </div>
+        </td>
+      </tr>
+      {getItemsByCategory('corporate', 'expense', 'office').map(item => (
+        <tr key={item.id}>
+          <td className="px-2 py-1 text-xs text-gray-900 sticky left-0 bg-white">
+            <div className="flex items-center">
+              <span className="w-1.5 h-1.5 rounded-full mr-1" style={{ backgroundColor: getCategoryColor('office') }}></span>
+              {item.name}（万円）
+            </div>
+          </td>
+          {years.map(year => (
+            <td key={year} className="px-1 py-1 text-right text-xs">
+              <input
+                type="number"
+                value={item.amounts[year] || ''}
+                onChange={(e) => {
+                  const value = e.target.value === '' ? 0 : Number(e.target.value);
+                  if (!isNaN(value)) {
+                    handleExpenseChange('corporate', item.id, year, value);
+                  }
+                }}
+                className={inputStyle}
+              />
+            </td>
+          ))}
+        </tr>
+      ))}
+
+      {/* 法人原価 */}
+      <tr className="bg-gray-100">
+        <td colSpan={years.length + 1} className="px-2 py-1 font-medium text-gray-700 text-xs">
+          <div className="flex items-center">
+            <span className="w-2 h-2 rounded-full mr-1" style={{ backgroundColor: getCategoryColor('cost') }}></span>
+            法人原価 <span className="text-xs text-green-600 ml-1">（売上比例・自動計算）</span>
+          </div>
+        </td>
+      </tr>
+      {getItemsByCategory('corporate', 'expense', 'cost').map(item => (
+        <tr key={item.id}>
+          <td className="px-2 py-1 text-xs text-gray-900 sticky left-0 bg-white">
+            <div className="flex items-center">
+              <span className="w-1.5 h-1.5 rounded-full mr-1" style={{ backgroundColor: getCategoryColor('cost') }}></span>
+              {item.name}（万円）
+            </div>
+          </td>
+          {years.map(year => (
+            <td key={year} className="px-1 py-1 text-right text-xs">
+              <input
+                type="number"
+                value={item.amounts[year] || ''}
+                disabled={item._costSettings} // 原価設定済みの場合は手動入力を無効化
+                onChange={(e) => {
+                  const value = e.target.value === '' ? 0 : Number(e.target.value);
+                  if (!isNaN(value)) {
+                    handleExpenseChange('corporate', item.id, year, value);
+                  }
+                }}
+                className={`${inputStyle} ${item._costSettings ? 'bg-green-50 border-green-200 text-green-800' : ''}`}
+              />
+            </td>
+          ))}
+        </tr>
+      ))}
                 
                 {/* ローン返済 - 法人 */}
                 <tr className="bg-gray-100">

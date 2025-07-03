@@ -30,7 +30,7 @@ const AutofillModal: React.FC<{
     initialAmount: 0,
     endAge: 65,
     raiseType: 'percentage',
-    raisePercentage: 2,
+    raisePercentage: 0,
     raiseAmount: 0,
     maxAmount: undefined,
   });
@@ -828,15 +828,15 @@ export function IncomeForm() {
             <label className="text-sm font-medium text-sky-700">
               収入からの投資運用利回り(%)
               <TermTooltip term="" width="wide">
-                収入から投資に回した資産の年間運用利回りです。0%〜20%の範囲で設定できます。
+                収入から投資に回した資産の年間運用利回りです。0%〜100%の範囲で設定できます。
               </TermTooltip>
             </label>
             <input
               type="number"
               min="0"
-              max="20"
+              max="100"
               step="0.1"
-              value={parameters.incomeInvestmentReturn || 5.0}
+              value={parameters.incomeInvestmentReturn || 0}
               onChange={(e) => setParameters({ incomeInvestmentReturn: Number(e.target.value) })}
               className="w-full rounded-md border border-sky-200 px-3 py-2 text-sm focus:ring-2 focus:ring-sky-500 focus:border-transparent"
               placeholder="5.0"
@@ -845,6 +845,7 @@ export function IncomeForm() {
         </div>
       </div>
 
+      
       {renderIncomeTable('personal')}
       {renderIncomeTable('corporate')}
 

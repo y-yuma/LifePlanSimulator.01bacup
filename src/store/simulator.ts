@@ -1,1202 +1,1637 @@
-import { create } from 'zustand';
-import { calculateNetIncome, calculateHousingExpense } from '@/lib/calculations';
+import React, { useEffect, useState } from 'react';
+import { useSimulatorStore } from '@/store/simulator';
+import { Download, ChevronDown, ChevronUp, Info } from 'lucide-react';
 import { 
-  calculatePensionForYear, 
-  calculateSpousePensionForYear 
-} from '@/lib/pension-calculations';
+  MAIN_CATEGORIES,
+  INCOME_CATEGORIES, 
+  EXPENSE_CATEGORIES,
+  CORPORATE_EXPENSE_CATEGORIES,
+  ASSET_CATEGORIES, 
+  LIABILITY_CATEGORIES 
+} from '@/components/ui/category-select';
+// ES Modules形式でインポート
+import { calculateNetIncome } from '@/lib/calculations';
+// ヘルプ関連のインポート
+import { TermTooltip } from '@/components/common/TermTooltip';
+import { ContextHelp } from '@/components/common/ContextHelp';
+import { cashFlowTermsContent, cashFlowFormulasContent } from '@/utils/helpContent';
 
-type Occupation = 'company_employee' | 'part_time_with_pension' | 'part_time_without_pension' | 'self_employed' | 'homemaker';
-
-export interface IncomeItem {
-  id: string;
-  name: string;
-  type: 'income' | 'profit' | 'side';
-  category?: string;
-  amounts: { [year: number]: number };
-  // 原本額面データを保存
-  _originalAmounts?: { [year: number]: number };
-  // 手取り額を保存
-  _netAmounts?: { [year: number]: number };
-  // 投資関連プロパティ
-  investmentRatio: number; 
-  maxInvestmentAmount: number;
-  // 自動計算フラグ
-  isAutoCalculated?: boolean;
+function calculateAge(startYear: number, currentAge: number, targetYear: number) {
+  return currentAge + (targetYear - startYear);
 }
 
-export interface IncomeSection {
-  personal: IncomeItem[];
-  corporate: IncomeItem[];
-}
-
-// Expense types
-export interface ExpenseItem {
-  id: string;
-  name: string;
-  type: 'living' | 'housing' | 'education' | 'other';
-  category?: string;
-  amounts: { [year: number]: number };
-  // 生の入力値を保存
-  _rawAmounts?: { [year: number]: number };
-}
-
-export interface ExpenseSection {
-  personal: ExpenseItem[];
-  corporate: ExpenseItem[];
-}
-
-// Asset types - **修正**: investmentReturn プロパティを追加
-export interface AssetItem {
-  id: string;
-  name: string;
-  type: 'cash' | 'investment' | 'property' | 'other';
-  category?: string;
-  amounts: { [year: number]: number };
-  isInvestment?: boolean;
-  investmentReturn?: number; // **追加**: 個別運用利回り
-}
-
-export interface AssetSection {
-  personal: AssetItem[];
-  corporate: AssetItem[];
-}
-
-// Liability types - 修正版：計算済みフラグを追加
-export interface LiabilityItem {
-  id: string;
-  name: string;
-  type: 'loan' | 'credit' | 'other';
-  category?: string;
-  amounts: { [year: number]: number };
-  interestRate?: number;
-  termYears?: number;
-  startYear?: number;
-  repaymentType?: 'equal_principal' | 'equal_payment';
-  autoCalculate?: boolean;
-  // 借入時の元本を記録
-  originalAmount?: number;
-  // 計算済みフラグ（重複計算を防ぐ）
-  _isCalculated?: boolean;
-  // 計算時のハッシュ（設定変更検知用）
-  _calculationHash?: string;
-}
-
-export interface LiabilitySection {
-  personal: LiabilityItem[];
-  corporate: LiabilityItem[];
-}
-
-// History types
-export interface HistoryEntry {
-  timestamp: number;
-  type: 'income' | 'expense' | 'asset' | 'liability';
-  section: 'personal' | 'corporate';
-  itemId: string;
-  year: number;
-  previousValue: number;
-  newValue: number;
-}
-
-export interface BasicInfo {
-  currentAge: number;
-  startYear: number;
-  deathAge: number;
-  gender: 'male' | 'female';
-  monthlyLivingExpense: number;
-  occupation: Occupation;
-  maritalStatus: 'single' | 'married' | 'planning';
-  housingInfo: {
-    type: 'rent' | 'own';
-    rent?: {
-      monthlyRent: number;
-      annualIncreaseRate: number;
-      renewalFee: number;
-      renewalInterval: number;
-    };
-    own?: {
-      purchaseYear: number;
-      purchasePrice: number;
-      loanAmount: number;
-      interestRate: number;
-      loanTermYears: number;
-      maintenanceCostRate: number;
-    };
-  };
-  spouseInfo?: {
-    age?: number;
-    currentAge?: number;
-    marriageAge?: number;
-    occupation?: Occupation;
-    additionalExpense?: number;
-    // 配偶者の年金関連情報も保存
-    workStartAge?: number;
-    pensionStartAge?: number;
-    willWorkAfterPension?: boolean;
-  };
-  children: {
-    currentAge: number;
-    educationPlan: {
-      nursery: string;
-      preschool: string;
-      elementary: string;
-      juniorHigh: string;
-      highSchool: string;
-      university: string;
-    };
-  }[];
-  plannedChildren: {
-    yearsFromNow: number;
-    educationPlan: {
-      nursery: string;
-      preschool: string;
-      elementary: string;
-      juniorHigh: string;
-      highSchool: string;
-      university: string;
-    };
-  }[];
-  // 年金関連フィールド
-  workStartAge?: number;
-  pensionStartAge?: number;
-  willWorkAfterPension?: boolean;
-}
-
-// **修正**: Parameters インターフェースに incomeInvestmentReturn を追加
-export interface Parameters {
-  inflationRate: number;
-  educationCostIncreaseRate: number;
-  investmentReturn: number;
-  investmentRatio?: number;
-  maxInvestmentAmount?: number;
-  incomeInvestmentReturn: number; // **追加**: 収入からの投資運用利回り
-}
-
-export interface CashFlowData {
-  [year: number]: {
-    mainIncome: number;
-    sideIncome: number;
-    spouseIncome: number;
-    pensionIncome: number;
-    spousePensionIncome: number;
-    investmentIncome: number;
-    livingExpense: number;
-    housingExpense: number;
-    educationExpense: number;
-    otherExpense: number;
-    loanRepayment: number;
-    personalAssets: number;
-    investmentAmount: number;
-    totalInvestmentAssets: number;
-    personalBalance: number;
-    personalTotalAssets: number;
-    personalLiabilityTotal: number;
-    personalNetAssets: number;
-    corporateIncome: number;
-    corporateOtherIncome: number;
-    corporateExpense: number;
-    corporateOtherExpense: number;
-    corporateLoanRepayment: number;
-    corporateBalance: number;
-    corporateTotalAssets: number;
-    corporateLiabilityTotal: number;
-    corporateNetAssets: number;
-    corporateInvestmentAmount: number;
-    corporateInvestmentIncome: number;
-    corporateTotalInvestmentAssets: number;
-  };
-}
-
-// ライフイベントの型定義
-export interface LifeEvent {
-  year: number;
-  description: string;
-  type: 'income' | 'expense';
-  category: string;
-  amount: number;
-  source: 'personal' | 'corporate' | 'personal_investment' | 'corporate_investment';
-}
-
-interface SimulatorState {
-  currentStep: number;
-  basicInfo: BasicInfo;
-  parameters: Parameters;
-  cashFlow: CashFlowData;
-  history: HistoryEntry[];
-  
-  // Form data
-  incomeData: IncomeSection;
-  expenseData: ExpenseSection;
-  assetData: AssetSection;
-  liabilityData: LiabilitySection;
-  lifeEvents: LifeEvent[];
-
-  // Actions
-  setCurrentStep: (step: number) => void;
-  setBasicInfo: (info: Partial<BasicInfo>) => void;
-  setParameters: (params: Partial<Parameters>) => void;
-  setCashFlow: (data: CashFlowData) => void;
-  updateCashFlowValue: (year: number, field: keyof CashFlowData[number], value: number) => void;
-  initializeCashFlow: () => void;
-  initializeFormData: () => void;
-  syncCashFlowFromFormData: () => void;
-  saveToLocalStorage: () => void;
-  loadFromLocalStorage: () => void;
-
-  // ライフイベント
-  addLifeEvent: (event: LifeEvent) => void;
-  removeLifeEvent: (index: number) => void;
-
-  // Form data actions
-  setIncomeData: (data: IncomeSection) => void;
-  setExpenseData: (data: ExpenseSection) => void;
-  setAssetData: (data: AssetSection) => void;
-  setLiabilityData: (data: LiabilitySection) => void;
-  
-  // History actions
-  addHistoryEntry: (entry: Omit<HistoryEntry, 'timestamp'>) => void;
-  clearHistory: () => void;
-}
-
-// 教育費計算用のダミー関数（実装は別ファイルにある想定）
-function calculateEducationExpense(
-  children: any[],
-  plannedChildren: any[],
+// getLifeEventDescription関数の修正
+function getLifeEventDescription(
   year: number,
-  currentAge: number,
-  startYear: number,
-  educationCostIncreaseRate: number
-): number {
-  // ダミー実装
-  return 0;
+  basicInfo: any,
+  lifeEvents: any[],
+  source: 'personal' | 'corporate' | 'personal_investment' | 'corporate_investment' = 'personal'
+): string {
+  const events: string[] = [];
+  
+  // Only include marriage and children events in personal section
+  if (source === 'personal') {
+    // Marriage event
+    if (basicInfo.maritalStatus === 'planning' && basicInfo.spouseInfo?.marriageAge) {
+      const marriageYear = basicInfo.startYear + (basicInfo.spouseInfo.marriageAge - basicInfo.currentAge);
+      if (year === marriageYear) {
+        events.push('結婚');
+      }
+    }
+
+    // Children birth events
+    if (basicInfo.children) {
+      basicInfo.children.forEach((child: any, index: number) => {
+        const birthYear = basicInfo.startYear - child.currentAge;
+        if (year === birthYear) {
+          events.push(`第${index + 1}子誕生`);
+        }
+      });
+    }
+
+    // Planned children birth events
+    if (basicInfo.plannedChildren) {
+      basicInfo.plannedChildren.forEach((child: any, index: number) => {
+        const birthYear = basicInfo.startYear + child.yearsFromNow;
+        if (year === birthYear) {
+          events.push(`第${(basicInfo.children?.length || 0) + index + 1}子誕生`);
+        }
+      });
+    }
+  }
+
+  // Life events based on source
+  if (lifeEvents) {
+    const yearEvents = lifeEvents.filter(event => event.year === year && event.source === source);
+    yearEvents.forEach(event => {
+      events.push(`${event.description}（${event.type === 'income' ? '+' : '-'}${event.amount}万円）`);
+    });
+  }
+
+  return events.join('、');
 }
 
-export const useSimulatorStore = create<SimulatorState>((set, get) => ({
-  currentStep: 0,
-  basicInfo: {
-    currentAge: 30,
-    startYear: new Date().getFullYear(),
-    deathAge: 80,
-    gender: 'male',
-    monthlyLivingExpense: 0,
-    occupation: 'company_employee',
-    maritalStatus: 'single',
-    housingInfo: {
-      type: 'rent',
-      rent: {
-        monthlyRent: 0,
-        annualIncreaseRate: 0,
-        renewalFee: 0,
-        renewalInterval: 2,
-      },
-    },
-    children: [],
-    plannedChildren: [],
-    workStartAge: 22,
-    pensionStartAge: 65,
-    willWorkAfterPension: false,
-  },
-  // **修正**: parameters に incomeInvestmentReturn を追加
-  parameters: {
-    inflationRate: 0,
-    educationCostIncreaseRate: 0,
-    investmentReturn: 0, // デフォルト値を5.0に変更
-    investmentRatio: 0,
-    maxInvestmentAmount: 0,
-    incomeInvestmentReturn: 0, // **追加**: 収入からの投資運用利回り
-  },
-  cashFlow: {},
-  history: [],
-  lifeEvents: [],
-
-  // Initialize form data
-  incomeData: {
-    personal: [
-      { id: '1', name: '給与収入', type: 'income', category: 'income', amounts: {}, investmentRatio: 10, maxInvestmentAmount: 100 },
-      { id: '2', name: '事業収入', type: 'profit', category: 'income', amounts: {}, investmentRatio: 10, maxInvestmentAmount: 100 },
-      { id: '3', name: '副業収入', type: 'side', category: 'income', amounts: {}, investmentRatio: 10, maxInvestmentAmount: 100 },
-      { id: '4', name: '配偶者収入', type: 'income', category: 'income', amounts: {}, investmentRatio: 10, maxInvestmentAmount: 100 },
-      { id: '5', name: '年金収入', type: 'income', category: 'income', amounts: {}, investmentRatio: 0, maxInvestmentAmount: 0, isAutoCalculated: false },
-      { id: '6', name: '配偶者年金収入', type: 'income', category: 'income', amounts: {}, investmentRatio: 0, maxInvestmentAmount: 0, isAutoCalculated: false },
-    ],
-    corporate: [
-      { id: '101', name: '売上', type: 'income', category: 'income', amounts: {}, investmentRatio: 10, maxInvestmentAmount: 100 },
-      { id: '102', name: 'その他収入', type: 'income', category: 'income', amounts: {}, investmentRatio: 5, maxInvestmentAmount: 50 },
-    ],
-  },
-  expenseData: {
-    personal: [
-      { id: '11', name: '生活費', type: 'living', category: 'living', amounts: {} },
-      { id: '12', name: '住居費', type: 'housing', category: 'housing', amounts: {} },
-      { id: '13', name: '教育費', type: 'education', category: 'education', amounts: {} },
-      { id: '14', name: 'その他', type: 'other', category: 'other', amounts: {} },
-    ],
-    corporate: [
-      { id: '111', name: '事業経費', type: 'other', category: 'business', amounts: {} },
-      { id: '112', name: 'その他経費', type: 'other', category: 'other', amounts: {} },
-    ],
-  },
-  assetData: {
-    personal: [
-      { id: '1', name: '現金・預金', type: 'cash', category: 'asset', amounts: {}, isInvestment: false, investmentReturn: 0.1 },
-      { id: '2', name: '投資資産', type: 'investment', category: 'asset', amounts: {}, isInvestment: true, investmentReturn: 5.0 },
-    ],
-    corporate: [],
-  },
-  liabilityData: {
-    personal: [
-      { id: '1', name: 'ローン', type: 'loan', category: 'liability', amounts: {}, interestRate: 1.0, termYears: 35 },
-      { id: '2', name: 'クレジット残高', type: 'credit', category: 'liability', amounts: {} },
-    ],
-    corporate: [
-      { id: '1', name: '借入金', type: 'loan', category: 'liability', amounts: {}, interestRate: 2.0, termYears: 10 },
-      { id: '2', name: '未払金', type: 'other', category: 'liability', amounts: {} },
-    ],
-  },
-
-  // Actions
-  setCurrentStep: (step) => set({ currentStep: step }),
+export function CashFlowForm() {
+  const { 
+    basicInfo, 
+    parameters,
+    cashFlow,
+    lifeEvents,
+    incomeData,
+    setIncomeData,
+    expenseData,
+    setExpenseData,
+    assetData,
+    liabilityData,
+    setCurrentStep,
+    syncCashFlowFromFormData,
+  } = useSimulatorStore();
   
-  setBasicInfo: (info) => {
-    set((state) => ({ basicInfo: { ...state.basicInfo, ...info } }));
-    get().initializeFormData();
-    get().initializeCashFlow();
-  },
+  // コンポーネントの状態
+  const [expandedSections, setExpandedSections] = useState({
+    personalIncome: true,
+    personalExpense: true,
+    personalAsset: true,
+    personalLiability: true,
+    corporateIncome: true,
+    corporateExpense: true,
+    corporateAsset: true,
+    corporateLiability: true,
+  });
+
+ // カテゴリ表示管理の状態
+  const [categoryVisibility, setCategoryVisibility] = useState({
+    income: { income: true, other: true },
+    expense: { living: true, housing: true, education: true, other: true },
+    corporateExpense: { business: true, office: true, cost: true, other: true }, // 法人原価カテゴリを追加
+    asset: { asset: true, other: true },
+    liability: { liability: true, other: true }
+  });
   
-  setParameters: (params) => {
-    set((state) => ({ parameters: { ...state.parameters, ...params } }));
-    
-    // パラメータ変更時に支出データのインフレ再計算を行う
-    const state = get();
-    const { basicInfo, expenseData } = state;
-    const startYear = basicInfo.startYear;
-    
-    // 更新後のパラメータをマージ
-    const newParameters = { ...state.parameters, ...params };
-    
-    // 支出データの全項目について再計算
-    let updatedExpenseData = { ...expenseData };
-    
-    ['personal', 'corporate'].forEach(section => {
-      updatedExpenseData[section] = updatedExpenseData[section].map(expense => {
-        const updatedExpense = { ...expense };
-        
-        // 生データがある場合、その値からインフレ計算をやり直す
-        if (updatedExpense._rawAmounts) {
-          Object.keys(updatedExpense._rawAmounts).forEach(yearStr => {
-            const year = parseInt(yearStr);
-            const rawValue = updatedExpense._rawAmounts![year];
-            const yearsSinceStart = year - startYear;
-            
-            let inflationRate = 0;
-            if (updatedExpense.category === 'living' || updatedExpense.category === 'housing' || 
-                updatedExpense.category === 'business' || updatedExpense.category === 'office') {
-              inflationRate = newParameters.inflationRate;
-            } else if (updatedExpense.category === 'education') {
-              inflationRate = newParameters.educationCostIncreaseRate;
-            }
-            
-            const inflationFactor = Math.pow(1 + inflationRate / 100, yearsSinceStart);
-            updatedExpense.amounts[year] = Math.round(rawValue * inflationFactor * 10) / 10;
-          });
-        }
-        
-        return updatedExpense;
-      });
-    });
-    
-    set({ expenseData: updatedExpenseData });
-    get().initializeCashFlow();
-  },
-  
-  setCashFlow: (data) => set({ cashFlow: data }),
-  
-  updateCashFlowValue: (year, field, value) => {
-    const roundedValue = Number(value.toFixed(1));
-    set((state) => ({
-      cashFlow: {
-        ...state.cashFlow,
-        [year]: {
-          ...state.cashFlow[year],
-          [field]: roundedValue,
-        },
-      },
-    }));
-    get().initializeCashFlow();
-  },
+  const yearsUntilDeath = basicInfo.deathAge - basicInfo.currentAge;
+  const years = Array.from(
+    { length: yearsUntilDeath + 1 },
+    (_, i) => basicInfo.startYear + i
+  );
 
-  // **完全修正版: syncCashFlowFromFormData - 年金計算機能付き + 資産反映修正**
-  syncCashFlowFromFormData: () => {
-    try {
-      const state = get();
-      const { basicInfo, parameters, incomeData, expenseData, assetData, liabilityData, lifeEvents } = state;
-      const yearsUntilDeath = basicInfo.deathAge - basicInfo.currentAge;
-      const years = Array.from(
-        { length: yearsUntilDeath + 1 },
-        (_, i) => basicInfo.startYear + i
-      );
+  useEffect(() => {
+    syncCashFlowFromFormData();
+  }, []);
 
-      const newCashFlow: CashFlowData = {};
-      
-      // **資産修正1**: 資産と負債のデータをディープコピーして作業用として使用
-      const workingAssetData = JSON.parse(JSON.stringify(assetData));
-      const workingLiabilityData = JSON.parse(JSON.stringify(liabilityData));
-      
-      // 負債の返済スケジュールを計算
-      const calculateLoanRepayments = (section: 'personal' | 'corporate') => {
-        let repayments: { [year: number]: number } = {};
-        
-        // 各負債項目の返済を計算
-        workingLiabilityData[section].forEach((liability: any) => {
-          if (liability.autoCalculate && liability.originalAmount && liability.termYears && liability.startYear) {
-            for (let i = 0; i < liability.termYears; i++) {
-              const repaymentYear = liability.startYear + i;
-              if (repaymentYear >= basicInfo.startYear && repaymentYear <= basicInfo.startYear + yearsUntilDeath) {
-                const monthlyPayment = liability.originalAmount / liability.termYears / 12;
-                const annualPayment = monthlyPayment * 12;
-                repayments[repaymentYear] = (repayments[repaymentYear] || 0) + annualPayment;
-              }
-            }
-          }
-        });
-        
-        return repayments;
-      };
-
-      const personalLoanRepayments = calculateLoanRepayments('personal');
-      const corporateLoanRepayments = calculateLoanRepayments('corporate');
-
-      // 投資資産と運用収益の追跡
-      let personalInvestmentAssets = 0;
-      let corporateInvestmentAssets = 0;
-      let personalTotalAssets = 0;
-      let corporateTotalAssets = 0;
-
-      // **資産修正2**: 初期資産の設定（各資産項目の初期値を総資産に加算）
-      workingAssetData.personal.forEach((asset: any) => {
-        const initialAmount = asset.amounts[basicInfo.startYear] || 0;
-        personalTotalAssets += initialAmount;
-        if (asset.isInvestment) {
-          personalInvestmentAssets += initialAmount;
-        }
-      });
-
-      workingAssetData.corporate.forEach((asset: any) => {
-        const initialAmount = asset.amounts[basicInfo.startYear] || 0;
-        corporateTotalAssets += initialAmount;
-        if (asset.isInvestment) {
-          corporateInvestmentAssets += initialAmount;
-        }
-      });
-
-      // **年金計算を実行** - ヘルパー関数
-      const findPersonalItem = (name: string) => incomeData.personal.find(i => i.name === name);
-      
-      // 年金関連項目を取得
-      const pensionItem = findPersonalItem('年金収入');
-      const spousePensionItem = findPersonalItem('配偶者年金収入');
-
-      // 年金計算を実行
-      if (pensionItem && pensionItem.isAutoCalculated) {
-        years.forEach(year => {
-          const yearsSinceStart = year - basicInfo.startYear;
-          const age = basicInfo.currentAge + yearsSinceStart;
-          
-          if (age >= (basicInfo.pensionStartAge || 65)) {
-            const calculatedPensionIncome = calculatePensionForYear(basicInfo, incomeData, year);
-            pensionItem.amounts[year] = calculatedPensionIncome;
-          } else {
-            pensionItem.amounts[year] = 0;
-          }
-        });
-      }
-
-      // 配偶者年金の計算
-      if (spousePensionItem && spousePensionItem.isAutoCalculated && basicInfo.maritalStatus !== 'single') {
-        years.forEach(year => {
-          const yearsSinceStart = year - basicInfo.startYear;
-          let spouseAge = 0;
-          
-          if (basicInfo.maritalStatus === 'married' && basicInfo.spouseInfo?.currentAge) {
-            spouseAge = basicInfo.spouseInfo.currentAge + yearsSinceStart;
-          } else if (basicInfo.maritalStatus === 'planning' && basicInfo.spouseInfo?.marriageAge && basicInfo.spouseInfo?.age) {
-            const marriageYear = basicInfo.startYear + (basicInfo.spouseInfo.marriageAge - basicInfo.currentAge);
-            
-            if (year < marriageYear) {
-              spousePensionItem.amounts[year] = 0;
-              return;
-            }
-            
-            const ageAtMarriage = basicInfo.spouseInfo.age;
-            spouseAge = ageAtMarriage + (year - marriageYear);
-          }
-          
-          if (spouseAge >= (basicInfo.spouseInfo?.pensionStartAge || 65)) {
-            const calculatedSpousePensionIncome = calculateSpousePensionForYear(basicInfo, incomeData, year);
-            spousePensionItem.amounts[year] = calculatedSpousePensionIncome;
-          } else {
-            spousePensionItem.amounts[year] = 0;
-          }
-        });
-      }
-
-      years.forEach((year, yearIndex) => {
-        // === 1. 収入計算 ===
-        let mainIncome = 0;
-        let sideIncome = 0;
-        let otherSideIncome = 0;
-        let spouseIncome = 0;
-        let pensionIncome = 0;
-        let spousePensionIncome = 0;
-        let corporateIncome = 0;
-        let corporateOtherIncome = 0;
-
-        // 各収入項目を処理
-        incomeData.personal.forEach((income: any) => {
-          const amount = income.amounts[year] || 0;
-          if (income.name === '給与収入') {
-            mainIncome += amount;
-          } else if (income.name === '副業収入') {
-            sideIncome += amount;
-          } else if (income.name === '配偶者収入') {
-            spouseIncome += amount;
-          } else if (income.name === '年金収入') {
-            pensionIncome += amount;
-          } else if (income.name === '配偶者年金収入') {
-            spousePensionIncome += amount;
-          } else {
-            otherSideIncome += amount;
-          }
-        });
-
-        incomeData.corporate.forEach((income: any) => {
-          const amount = income.amounts[year] || 0;
-          if (income.name === '売上') {
-            corporateIncome += amount;
-          } else {
-            corporateOtherIncome += amount;
-          }
-        });
-
-        // === 2. 投資額計算（修正版）===
-        let personalInvestmentAmount = 0;
-        let corporateInvestmentAmount = 0;
-
-        // 個人の投資額計算
-        incomeData.personal.forEach((income: any) => {
-          const amount = income.amounts[year] || 0;
-          const investmentRatio = income.investmentRatio || 0;
-          const maxInvestmentAmount = income.maxInvestmentAmount || 0;
-          
-          // **修正1: 投資割合が0%の場合は投資額も0**
-          if (investmentRatio > 0 && amount > 0) {
-            const calculatedInvestment = Math.min(
-              amount * (investmentRatio / 100),
-              maxInvestmentAmount
-            );
-            personalInvestmentAmount += calculatedInvestment;
-          }
-        });
-
-        // 法人の投資額計算
-        incomeData.corporate.forEach((income: any) => {
-          const amount = income.amounts[year] || 0;
-          const investmentRatio = income.investmentRatio || 0;
-          const maxInvestmentAmount = income.maxInvestmentAmount || 0;
-          
-          // **修正1: 投資割合が0%の場合は投資額も0**
-          if (investmentRatio > 0 && amount > 0) {
-            const calculatedInvestment = Math.min(
-              amount * (investmentRatio / 100),
-              maxInvestmentAmount
-            );
-            corporateInvestmentAmount += calculatedInvestment;
-          }
-        });
-
-        // === 3. **資産修正3**: 運用収益計算（資産ページの資産も含む）===
-        let personalInvestmentIncome = 0;
-        let corporateInvestmentIncome = 0;
-
-        if (yearIndex > 0) { // 初年度は運用収益なし
-          // **資産修正4**: 資産ページの個別運用利回りを適用し、資産額を更新
-          workingAssetData.personal.forEach((asset: any) => {
-            if (asset.isInvestment) {
-              // **修正**: 前年の資産額を取得、前年に資産がない場合は当年から開始
-              let assetAmount = asset.amounts[year - 1] || 0;
-              
-              // **重要修正**: 前年に資産がなく、当年に新規で資産が追加された場合の処理
-              if (assetAmount === 0 && asset.amounts[year] && asset.amounts[year] > 0) {
-                // 当年から新規で資産が追加された場合は、当年は運用収益なしで翌年から開始
-                asset.amounts[year] = asset.amounts[year]; // 入力値をそのまま維持
-              } else if (assetAmount > 0) {
-                // 前年に資産があった場合、運用収益を計算
-                const investmentReturn = asset.investmentReturn || parameters.investmentReturn || 5.0;
-                if (investmentReturn > 0) {
-                  const assetInvestmentIncome = assetAmount * (investmentReturn / 100);
-                  personalInvestmentIncome += assetInvestmentIncome;
-                  
-                  // **重要**: 資産自体の金額を運用収益分増加させる
-                  const currentInputAmount = asset.amounts[year] || 0; // ユーザーの入力値
-                  asset.amounts[year] = assetAmount + assetInvestmentIncome + currentInputAmount;
-                }
-              } else {
-                // 運用されない場合は前年と同額、または当年の入力値
-                if (!asset.amounts[year]) {
-                  asset.amounts[year] = assetAmount;
-                }
-              }
-            } else {
-              // 運用資産でない場合は前年と同額（または設定値）
-              if (!asset.amounts[year]) {
-                asset.amounts[year] = asset.amounts[year - 1] || 0;
-              }
-            }
-          });
-
-          workingAssetData.corporate.forEach((asset: any) => {
-            if (asset.isInvestment) {
-              // **修正**: 前年の資産額を取得、前年に資産がない場合は当年から開始
-              let assetAmount = asset.amounts[year - 1] || 0;
-              
-              // **重要修正**: 前年に資産がなく、当年に新規で資産が追加された場合の処理
-              if (assetAmount === 0 && asset.amounts[year] && asset.amounts[year] > 0) {
-                // 当年から新規で資産が追加された場合は、当年は運用収益なしで翌年から開始
-                asset.amounts[year] = asset.amounts[year]; // 入力値をそのまま維持
-              } else if (assetAmount > 0) {
-                // 前年に資産があった場合、運用収益を計算
-                const investmentReturn = asset.investmentReturn || parameters.investmentReturn || 5.0;
-                if (investmentReturn > 0) {
-                  const assetInvestmentIncome = assetAmount * (investmentReturn / 100);
-                  corporateInvestmentIncome += assetInvestmentIncome;
-                  
-                  // **重要**: 資産自体の金額を運用収益分増加させる
-                  const currentInputAmount = asset.amounts[year] || 0; // ユーザーの入力値
-                  asset.amounts[year] = assetAmount + assetInvestmentIncome + currentInputAmount;
-                }
-              } else {
-                // 運用されない場合は前年と同額、または当年の入力値
-                if (!asset.amounts[year]) {
-                  asset.amounts[year] = assetAmount;
-                }
-              }
-            } else {
-              // 運用資産でない場合は前年と同額（または設定値）
-              if (!asset.amounts[year]) {
-                asset.amounts[year] = asset.amounts[year - 1] || 0;
-              }
-            }
-          });
-
-          // **修正3: 収入からの投資による運用収益を追加**
-          // 前年までに積み立てた投資資産からの収益
-          if (personalInvestmentAssets > 0) {
-            const incomeInvestmentReturn = parameters.incomeInvestmentReturn || 5.0;
-            personalInvestmentIncome += personalInvestmentAssets * (incomeInvestmentReturn / 100);
-          }
-
-          if (corporateInvestmentAssets > 0) {
-            const incomeInvestmentReturn = parameters.incomeInvestmentReturn || 5.0;
-            corporateInvestmentIncome += corporateInvestmentAssets * (incomeInvestmentReturn / 100);
-          }
-        } else {
-          // **初年度は資産額をそのまま設定**
-          workingAssetData.personal.forEach((asset: any) => {
-            if (!asset.amounts[year]) {
-              asset.amounts[year] = asset.amounts[basicInfo.startYear] || 0;
-            }
-          });
-
-          workingAssetData.corporate.forEach((asset: any) => {
-            if (!asset.amounts[year]) {
-              asset.amounts[year] = asset.amounts[basicInfo.startYear] || 0;
-            }
-          });
-        }
-
-        // === 4. 支出計算 ===
-        let livingExpense = 0;
-        let housingExpense = 0;
-        let educationExpense = 0;
-        let otherPersonalExpense = 0;
-        let corporateExpense = 0;
-        let corporateOtherExpense = 0;
-
-        expenseData.personal.forEach((expense: any) => {
-          const amount = expense.amounts[year] || 0;
-          if (expense.name === '生活費') {
-            livingExpense += amount;
-          } else if (expense.name === '住居費') {
-            housingExpense += amount;
-          } else if (expense.name === '教育費') {
-            educationExpense += amount;
-          } else {
-            otherPersonalExpense += amount;
-          }
-        });
-
-        expenseData.corporate.forEach((expense: any) => {
-          const amount = expense.amounts[year] || 0;
-          if (expense.name === '事業経費') {
-            corporateExpense += amount;
-          } else {
-            corporateOtherExpense += amount;
-          }
-        });
-
-        // === 5. ライフイベント計算 ===
-        let personalLifeEventIncome = 0;
-        let personalLifeEventExpense = 0;
-        let corporateLifeEventIncome = 0;
-        let corporateLifeEventExpense = 0;
-        let personalInvestmentLifeEventIncome = 0;
-        let personalInvestmentLifeEventExpense = 0;
-        let corporateInvestmentLifeEventIncome = 0;
-        let corporateInvestmentLifeEventExpense = 0;
-
-        lifeEvents.filter(event => event.year === year).forEach(event => {
-          if (event.source === 'personal') {
-            if (event.type === 'income') {
-              personalLifeEventIncome += event.amount;
-            } else {
-              personalLifeEventExpense += event.amount;
-            }
-          } else if (event.source === 'corporate') {
-            if (event.type === 'income') {
-              corporateLifeEventIncome += event.amount;
-            } else {
-              corporateLifeEventExpense += event.amount;
-            }
-          } else if (event.source === 'personal_investment') {
-            if (event.type === 'income') {
-              personalInvestmentLifeEventIncome += event.amount;
-            } else {
-              personalInvestmentLifeEventExpense += event.amount;
-            }
-          } else if (event.source === 'corporate_investment') {
-            if (event.type === 'income') {
-              corporateInvestmentLifeEventIncome += event.amount;
-            } else {
-              corporateInvestmentLifeEventExpense += event.amount;
-            }
-          }
-        });
-
-        // === 6. ローン返済額取得 ===
-        const personalLoanRepayment = personalLoanRepayments[year] || 0;
-        const corporateLoanRepayment = corporateLoanRepayments[year] || 0;
-
-        // === 7. 負債総額計算 ===
-        let personalLiabilityTotal = 0;
-        let corporateLiabilityTotal = 0;
-
-        liabilityData.personal.forEach((liability: any) => {
-          personalLiabilityTotal += Math.abs(liability.amounts[year] || 0);
-        });
-
-        liabilityData.corporate.forEach((liability: any) => {
-          corporateLiabilityTotal += Math.abs(liability.amounts[year] || 0);
-        });
-
-        // === 8. **資産修正5**: 収支とバランス計算（資産ページの資産を考慮） ===
-        const personalTotalIncome = mainIncome + sideIncome + otherSideIncome + spouseIncome + 
-          pensionIncome + spousePensionIncome + personalInvestmentIncome + personalLifeEventIncome;
-        const personalTotalExpense = livingExpense + housingExpense + educationExpense + 
-          otherPersonalExpense + personalInvestmentAmount + personalLifeEventExpense + personalLoanRepayment;
-        const personalBalance = personalTotalIncome - personalTotalExpense;
-
-        const corporateTotalIncome = corporateIncome + corporateOtherIncome + corporateInvestmentIncome + corporateLifeEventIncome;
-        const corporateTotalExpense = corporateExpense + corporateOtherExpense + corporateInvestmentAmount + 
-          corporateLifeEventExpense + corporateLoanRepayment;
-        const corporateBalance = corporateTotalIncome - corporateTotalExpense;
-
-        // === 9. **資産修正6**: 資産更新（資産ページの資産も含めて総資産を計算） ===
-        personalTotalAssets += personalBalance;
-        corporateTotalAssets += corporateBalance;
-
-        // **資産修正7**: 資産ページで設定された資産の現在値を総資産に加算
-        let currentPersonalAssetPageTotal = 0;
-        let currentCorporateAssetPageTotal = 0;
-
-        workingAssetData.personal.forEach((asset: any) => {
-          currentPersonalAssetPageTotal += asset.amounts[year] || 0;
-        });
-
-        workingAssetData.corporate.forEach((asset: any) => {
-          currentCorporateAssetPageTotal += asset.amounts[year] || 0;
-        });
-
-        // **資産修正8**: 総資産に資産ページの資産を反映
-        // 初年度は初期資産がすでに加算されているので、2年目以降は差分を加算
-        if (yearIndex > 0) {
-          let previousPersonalAssetPageTotal = 0;
-          let previousCorporateAssetPageTotal = 0;
-
-          workingAssetData.personal.forEach((asset: any) => {
-            previousPersonalAssetPageTotal += asset.amounts[year - 1] || 0;
-          });
-
-          workingAssetData.corporate.forEach((asset: any) => {
-            previousCorporateAssetPageTotal += asset.amounts[year - 1] || 0;
-          });
-
-          // 資産ページの資産増加分を総資産に反映
-          personalTotalAssets += (currentPersonalAssetPageTotal - previousPersonalAssetPageTotal);
-          corporateTotalAssets += (currentCorporateAssetPageTotal - previousCorporateAssetPageTotal);
-        }
-
-        // **修正4: 投資資産の正確な更新**
-        const currentPersonalInvestmentAssets = personalInvestmentAssets + personalInvestmentAmount + 
-          personalInvestmentIncome + personalInvestmentLifeEventIncome - personalInvestmentLifeEventExpense;
-        const currentCorporateInvestmentAssets = corporateInvestmentAssets + corporateInvestmentAmount + 
-          corporateInvestmentIncome + corporateInvestmentLifeEventIncome - corporateInvestmentLifeEventExpense;
-
-        // 来年用に更新
-        personalInvestmentAssets = currentPersonalInvestmentAssets;
-        corporateInvestmentAssets = currentCorporateInvestmentAssets;
-
-        // 純資産計算
-        const personalNetAssets = personalTotalAssets - personalLiabilityTotal;
-        const corporateNetAssets = corporateTotalAssets - corporateLiabilityTotal;
-
-        // === 10. キャッシュフローデータ保存 ===
-        newCashFlow[year] = {
-          mainIncome: Math.round(mainIncome * 10) / 10,
-          sideIncome: Math.round((sideIncome + otherSideIncome) * 10) / 10,
-          spouseIncome: Math.round(spouseIncome * 10) / 10,
-          pensionIncome: Math.round(pensionIncome * 10) / 10,
-          spousePensionIncome: Math.round(spousePensionIncome * 10) / 10,
-          investmentIncome: Math.round(personalInvestmentIncome * 10) / 10,
-          livingExpense: Math.round(livingExpense * 10) / 10,
-          housingExpense: Math.round(housingExpense * 10) / 10,
-          educationExpense: Math.round(educationExpense * 10) / 10,
-          otherExpense: Math.round(otherPersonalExpense * 10) / 10,
-          loanRepayment: Math.round(personalLoanRepayment * 10) / 10,
-          personalAssets: Math.round(personalTotalAssets * 10) / 10,
-          investmentAmount: Math.round(personalInvestmentAmount * 10) / 10,
-          totalInvestmentAssets: Math.round(currentPersonalInvestmentAssets * 10) / 10,
-          personalBalance: Math.round(personalBalance * 10) / 10,
-          personalTotalAssets: Math.round(personalTotalAssets * 10) / 10,
-          personalLiabilityTotal: Math.round(personalLiabilityTotal * 10) / 10,
-          personalNetAssets: Math.round(personalNetAssets * 10) / 10,
-          corporateIncome: Math.round(corporateIncome * 10) / 10,
-          corporateOtherIncome: Math.round(corporateOtherIncome * 10) / 10,
-          corporateExpense: Math.round(corporateExpense * 10) / 10,
-          corporateOtherExpense: Math.round(corporateOtherExpense * 10) / 10,
-          corporateLoanRepayment: Math.round(corporateLoanRepayment * 10) / 10,
-          corporateBalance: Math.round(corporateBalance * 10) / 10,
-          corporateTotalAssets: Math.round(corporateTotalAssets * 10) / 10,
-          corporateLiabilityTotal: Math.round(corporateLiabilityTotal * 10) / 10,
-          corporateNetAssets: Math.round(corporateNetAssets * 10) / 10,
-          corporateInvestmentAmount: Math.round(corporateInvestmentAmount * 10) / 10,
-          corporateInvestmentIncome: Math.round(corporateInvestmentIncome * 10) / 10,
-          corporateTotalInvestmentAssets: Math.round(currentCorporateInvestmentAssets * 10) / 10
-        };
-      });
-
-      set({ cashFlow: newCashFlow });
-    } catch (error) {
-      console.error("Error in syncCashFlowFromFormData:", error);
-    }
-  },
-
-  initializeCashFlow: () => {
-    get().syncCashFlowFromFormData();
-  },
-
-  // Form data actions
-  setIncomeData: (data) => {
-    set({ incomeData: data });
-    get().initializeCashFlow();
-  },
-  
-  setExpenseData: (data) => {
-    set({ expenseData: data });
-    get().initializeCashFlow();
-  },
-  
-  setAssetData: (data) => {
-    set({ assetData: data });
-    get().initializeCashFlow();
-  },
-  
-  setLiabilityData: (data) => {
-    set({ liabilityData: data });
-    get().initializeCashFlow();
-  },
-
-  // ライフイベント関連のアクション
-  addLifeEvent: (event) => {
-    set((state) => ({
-      lifeEvents: [...state.lifeEvents, event],
-    }));
-    get().initializeCashFlow();
-  },
-  
-  removeLifeEvent: (index) => {
-    set((state) => ({
-      lifeEvents: state.lifeEvents.filter((_, i) => i !== index),
-    }));
-    get().initializeCashFlow();
-  },
-
-  // History actions
-  addHistoryEntry: (entry) => {
-    set((state) => ({
-      history: [
-        ...state.history,
-        { ...entry, timestamp: Date.now() },
-      ],
-    }));
-  },
-  
-  clearHistory: () => set({ history: [] }),
-
-  // LocalStorage
-  saveToLocalStorage: () => {
-    const state = get();
-    try {
-      const data = {
-        basicInfo: state.basicInfo,
-        parameters: state.parameters,
-        incomeData: state.incomeData,
-        expenseData: state.expenseData,
-        assetData: state.assetData,
-        liabilityData: state.liabilityData,
-        lifeEvents: state.lifeEvents,
-      };
-      localStorage.setItem('simulatorState', JSON.stringify(data));
-    } catch (error) {
-      console.error('Failed to save to localStorage:', error);
-    }
-  },
-  
-  loadFromLocalStorage: () => {
-    try {
-      const savedState = localStorage.getItem('simulatorState');
-      if (savedState) {
-        const data = JSON.parse(savedState);
-        set({
-          basicInfo: data.basicInfo,
-          parameters: data.parameters,
-          incomeData: data.incomeData,
-          expenseData: data.expenseData,
-          assetData: data.assetData,
-          liabilityData: data.liabilityData,
-          lifeEvents: data.lifeEvents || [],
-        });
-        get().initializeCashFlow();
-      }
-    } catch (error) {
-      console.error('Failed to load from localStorage:', error);
-    }
-  },
-
-  // initializeFormData 関数（インポート対応修正版）
-  initializeFormData: () => {
-    const state = get();
-    const { basicInfo, parameters, incomeData: existingIncomeData, expenseData: existingExpenseData } = state;
-    
-    // インポート済みデータがある場合はスキップ
-    if (existingIncomeData && existingIncomeData.personal && existingIncomeData.personal.length > 0) {
-      // 既存データに値が入っている場合は初期化をスキップ
-      const hasIncomeData = existingIncomeData.personal.some(item => 
-        Object.keys(item.amounts || {}).length > 0 || 
-        Object.keys(item._originalAmounts || {}).length > 0
-      );
-      const hasExpenseData = existingExpenseData.personal.some(item => 
-        Object.keys(item.amounts || {}).length > 0 || 
-        Object.keys(item._rawAmounts || {}).length > 0
-      );
-      if (hasIncomeData || hasExpenseData) {
-        console.log('既存データが検出されたため、初期化をスキップします');
-        return;
-      }
-    }
-    
-    const yearsUntilDeath = basicInfo.deathAge - basicInfo.currentAge;
-    const years = Array.from(
-      { length: yearsUntilDeath + 1 },
-      (_, i) => basicInfo.startYear + i
+  // 給与収入が手取り計算対象かどうか判定する関数
+  const isNetIncomeTarget = (itemName: string) => {
+    return (
+      (itemName === '給与収入' && 
+       (basicInfo.occupation === 'company_employee' || basicInfo.occupation === 'part_time_with_pension')) ||
+      (itemName === '配偶者収入' && basicInfo.spouseInfo?.occupation && 
+       (basicInfo.spouseInfo.occupation === 'company_employee' || basicInfo.spouseInfo.occupation === 'part_time_with_pension'))
     );
+  };
 
-    // 収入データの初期化
-    const newIncomeData = { 
-      personal: [
-        { 
-          id: '1', 
-          name: '給与収入', 
-          type: 'income', 
-          category: 'income',
-          amounts: {}, 
-          investmentRatio: parameters.investmentRatio || 0,
-          maxInvestmentAmount: parameters.maxInvestmentAmount || 0
-        },
-        { 
-          id: '2', 
-          name: '事業収入', 
-          type: 'profit', 
-          category: 'income',
-          amounts: {}, 
-          investmentRatio: parameters.investmentRatio || 0,
-          maxInvestmentAmount: parameters.maxInvestmentAmount || 0
-        },
-        { 
-          id: '3', 
-          name: '副業収入', 
-          type: 'side', 
-          category: 'income',
-          amounts: {}, 
-          investmentRatio: parameters.investmentRatio || 0,
-          maxInvestmentAmount: parameters.maxInvestmentAmount || 0
-        },
-        { 
-          id: '4', 
-          name: '年金収入', 
-          type: 'income', 
-          category: 'income',
-          amounts: {}, 
-          investmentRatio: parameters.investmentRatio || 0,
-          maxInvestmentAmount: parameters.maxInvestmentAmount || 0,
-          isAutoCalculated: true
-        },
-      ],
-      corporate: [
-        { 
-          id: '1', 
-          name: '売上', 
-          type: 'income', 
-          category: 'income',
-          amounts: {}, 
-          investmentRatio: parameters.investmentRatio || 0,
-          maxInvestmentAmount: parameters.maxInvestmentAmount || 0
-        },
-        { 
-          id: '2', 
-          name: 'その他収入', 
-          type: 'income', 
-          category: 'income',
-          amounts: {}, 
-          investmentRatio: parameters.investmentRatio || 0,
-          maxInvestmentAmount: parameters.maxInvestmentAmount || 0
-        },
-      ],
+  // 入力フォーカスが外れたときのハンドラ - 手取り計算を行う
+  const handleAmountBlur = (
+    section: 'personal' | 'corporate',
+    itemId: string,
+    year: number,
+    value: number
+  ) => {
+    if (section === 'personal') {
+      const item = incomeData[section].find(i => i.id === itemId);
+      
+      // 給与収入で会社員または厚生年金ありのパートの場合のみ手取り計算を行う
+      if (item && isNetIncomeTarget(item.name)) {
+        // 職業を判断
+        const occupation = item.name === '給与収入' ? basicInfo.occupation : basicInfo.spouseInfo?.occupation;
+        
+        // 手取り計算
+        const netResult = calculateNetIncome(value, occupation);
+        const netIncome = netResult.netIncome;
+        
+        // 額面は_originalAmountsに保存、表示用のamountsは手取り額に更新
+        setIncomeData({
+          ...incomeData,
+          [section]: incomeData[section].map(i => {
+            if (i.id === itemId) {
+              return {
+                ...i,
+                _originalAmounts: { ...(i._originalAmounts || {}), [year]: value },
+                amounts: { ...(i.amounts || {}), [year]: netIncome }
+              };
+            }
+            return i;
+          })
+        });
+
+        // キャッシュフロー再計算
+        syncCashFlowFromFormData();
+      }
+    }
+  };
+
+  const handleAmountChange = (
+    section: 'personal' | 'corporate',
+    itemId: string,
+    year: number,
+    value: number
+  ) => {
+    setIncomeData({
+      ...incomeData,
+      [section]: incomeData[section].map(item =>
+        item.id === itemId
+          ? {
+              ...item,
+              amounts: {
+                ...item.amounts,
+                [year]: value,
+              },
+            }
+          : item
+      ),
+    });
+    syncCashFlowFromFormData();
+  };
+
+  // 支出データの入力値変更時のハンドラ - 表示用のみ更新
+  const handleExpenseChange = (
+    section: 'personal' | 'corporate',
+    itemId: string,
+    year: number,
+    value: number
+  ) => {
+    setExpenseData({
+      ...expenseData,
+      [section]: expenseData[section].map(item =>
+        item.id === itemId
+          ? {
+              ...item,
+              // 入力時には表示用のamountsのみ更新
+              amounts: {
+                ...item.amounts,
+                [year]: value,
+              },
+            }
+          : item
+      ),
+    });
+  };
+
+  // 支出データのフォーカス喪失時ハンドラ - インフレ計算を行う
+  const handleExpenseBlur = (
+    section: 'personal' | 'corporate',
+    itemId: string,
+    year: number,
+    value: number
+  ) => {
+    // 該当の項目を取得
+    const item = expenseData[section].find(i => i.id === itemId);
+    if (!item) return;
+
+    // 生データを保存
+    const updatedItem = {
+      ...item,
+      _rawAmounts: {
+        ...(item._rawAmounts || {}),
+        [year]: value,
+      }
     };
 
-    // 既婚または結婚予定の場合、配偶者年金も追加
-    if (basicInfo.maritalStatus !== 'single') {
-      const spousePensionItem = newIncomeData.personal.find(item => item.name === '配偶者年金収入');
-      
-      if (!spousePensionItem) {
-        newIncomeData.personal.push({
-          id: '5',
-          name: '配偶者年金収入',
-          type: 'income',
-          category: 'income',
-          amounts: {},
-          investmentRatio: parameters.investmentRatio || 5,
-          maxInvestmentAmount: parameters.maxInvestmentAmount || 50,
-          isAutoCalculated: true
-        });
-      }
+    // カテゴリに応じて適切なインフレ係数を適用
+    const yearsSinceStart = year - basicInfo.startYear;
+    let inflatedAmount = value; // デフォルトは変更なし
+
+    if (updatedItem.category === 'living' || updatedItem.type === 'living') {
+      // 生活費にはインフレ率を適用
+      const inflationFactor = Math.pow(1 + parameters.inflationRate / 100, yearsSinceStart);
+      inflatedAmount = Math.round(value * inflationFactor * 10) / 10;
+    } 
+    else if (updatedItem.category === 'housing' || updatedItem.type === 'housing') {
+      // 住居費にはインフレ率を適用
+      const inflationFactor = Math.pow(1 + parameters.inflationRate / 100, yearsSinceStart);
+      inflatedAmount = Math.round(value * inflationFactor * 10) / 10;
+    }
+    else if (updatedItem.category === 'education' || updatedItem.type === 'education') {
+      // 教育費には教育費上昇率を適用
+      const educationFactor = Math.pow(1 + parameters.educationCostIncreaseRate / 100, yearsSinceStart);
+      inflatedAmount = Math.round(value * educationFactor * 10) / 10;
+    }
+    else if (updatedItem.category === 'business' || updatedItem.type === 'business') {
+      // 事業運営費にはインフレ率を適用
+      const inflationFactor = Math.pow(1 + parameters.inflationRate / 100, yearsSinceStart);
+      inflatedAmount = Math.round(value * inflationFactor * 10) / 10;
+    }
+    else if (updatedItem.category === 'office' || updatedItem.type === 'office') {
+      // オフィス・設備費にはインフレ率を適用
+      const inflationFactor = Math.pow(1 + parameters.inflationRate / 100, yearsSinceStart);
+      inflatedAmount = Math.round(value * inflationFactor * 10) / 10;
+    }
+    else {
+      // その他カテゴリはインフレ適用なし（入力値をそのまま使用）
+      inflatedAmount = value;
     }
 
-    // 配偶者の収入がある場合は追加
-    if (basicInfo.maritalStatus !== 'single' && basicInfo.spouseInfo?.occupation 
-        && basicInfo.spouseInfo.occupation !== 'homemaker') {
-      const spouseIncomeItem = newIncomeData.personal.find(item => item.name === '配偶者収入');
-      
-      if (!spouseIncomeItem) {
-        newIncomeData.personal.push({
-          id: String(newIncomeData.personal.length + 1),
-          name: '配偶者収入',
-          type: 'income',
-          category: 'income',
-          amounts: {},
-          investmentRatio: parameters.investmentRatio || 10,
-          maxInvestmentAmount: parameters.maxInvestmentAmount || 100
-        });
-      }
-    }
+    // インフレ適用後の値を設定
+    updatedItem.amounts = {
+      ...updatedItem.amounts,
+      [year]: inflatedAmount
+    };
 
-    // 支出データの初期化
-    const newExpenseData = { ...state.expenseData };
+    // 更新した項目をステートに反映
+    setExpenseData({
+      ...expenseData,
+      [section]: expenseData[section].map(item =>
+        item.id === itemId ? updatedItem : item
+      )
+    });
     
-    // 支出データの初期値にインフレ率を適用する処理
-    years.forEach(year => {
-      const yearsSinceStart = year - basicInfo.startYear;
+    // キャッシュフローを再計算
+    syncCashFlowFromFormData();
+  };
+
+  const handleExportCSV = () => {
+    // ヘッダー行の作成
+    const headers = [
+      '年度',
+      '年齢',
+      'イベント（個人）',
+      'イベント（法人）',
+      ...incomeData.personal.map(item => `${item.name}（万円）`),
+      ...incomeData.corporate.map(item => `${item.name}（万円）`),
+      ...expenseData.personal.map(item => `${item.name}（万円）`),
+      ...expenseData.corporate.map(item => `${item.name}（万円）`),
+      '個人収支（万円）',
+      '個人総資産（万円）',
+      '法人収支（万円）',
+      '法人総資産（万円）',
+    ];
+
+    // データ行の作成
+    const rows = years.map(year => {
+      const cf = cashFlow[year] || {
+        personalBalance: 0,
+        personalTotalAssets: 0,
+        corporateBalance: 0,
+        corporateTotalAssets: 0
+      };
+
+      return [
+        year,
+        calculateAge(basicInfo.startYear, basicInfo.currentAge, year),
+        getLifeEventDescription(year, basicInfo, lifeEvents, 'personal'),
+        getLifeEventDescription(year, basicInfo, lifeEvents, 'corporate'),
+        ...incomeData.personal.map(item => item.amounts[year] || 0),
+        ...incomeData.corporate.map(item => item.amounts[year] || 0),
+        ...expenseData.personal.map(item => item.amounts[year] || 0),
+        ...expenseData.corporate.map(item => item.amounts[year] || 0),
+        cf.personalBalance,
+        cf.personalTotalAssets,
+        cf.corporateBalance,
+        cf.corporateTotalAssets,
+      ];
+    });
+
+    // CSVデータの作成
+    const csvContent = [
+      headers.join(','),
+      ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
+    ].join('\n');
+
+    // BOMを追加してExcelで文字化けを防ぐ
+    const bom = new Uint8Array([0xEF, 0xBB, 0xBF]);
+    const blob = new Blob([bom, csvContent], { type: 'text/csv;charset=utf-8' });
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', `キャッシュフロー_${new Date().toISOString().split('T')[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const handleNext = () => {
+    setCurrentStep(7);
+  };
+
+  const handleBack = () => {
+    setCurrentStep(5);
+  };
+
+  // インフレ率の表示整形用関数
+  const formatInflationRate = (category: string): string => {
+    if (category === 'education') {
+      return `${parameters.educationCostIncreaseRate}%`;
+    } else if (category === 'living' || category === 'housing' || category === 'business' || category === 'office') {
+      return `${parameters.inflationRate}%`;
+    } else {
+      return '0%';  // その他カテゴリは適用なし
+    }
+  };
+
+  // 入力フィールドのスタイル - コンパクトに調整
+  const inputStyle = "w-20 text-right border border-gray-200 rounded-md px-1 py-0.5 text-xs";
+
+  // カテゴリーの色を取得する関数
+  const getCategoryColor = (categoryId: string): string => {
+    // カテゴリーごとに異なる色を返す
+    const colorMap: {[key: string]: string} = {
+      // 大枠カテゴリー
+      'income': '#4CAF50',     // 緑
+      'living': '#F44336',     // 赤
+      'housing': '#FF9800',    // オレンジ
+      'education': '#9C27B0',  // 紫
+      'business': '#2196F3',   // 青
+      'office': '#00BCD4',     // 水色
+      'cost': '#FF5722',       // 深いオレンジ（法人原価）
+      'asset': '#2196F3',      // 青
+      'liability': '#9C27B0',  // 紫
+      'other': '#9E9E9E',      // グレー
+    };
+    
+    return colorMap[categoryId] || '#9E9E9E'; // デフォルトはグレー
+  };
+
+  // カテゴリの表示・非表示を切り替える関数
+  const toggleCategoryVisibility = (dataType: keyof typeof categoryVisibility, categoryId: string) => {
+    setCategoryVisibility(prev => ({
+      ...prev,
+      [dataType]: {
+        ...prev[dataType],
+        [categoryId]: !prev[dataType][categoryId]
+      }
+    }));
+  };
+
+  // すべてのカテゴリの表示・非表示を設定する関数
+  const setAllCategoriesVisibility = (dataType: keyof typeof categoryVisibility, visible: boolean) => {
+    const categories = { ...categoryVisibility[dataType] };
+    
+    Object.keys(categories).forEach(key => {
+      categories[key] = visible;
+    });
+    
+    setCategoryVisibility(prev => ({
+      ...prev,
+      [dataType]: categories
+    }));
+  };
+
+  // セクションの展開・折りたたみを切り替える
+  const toggleSection = (section: keyof typeof expandedSections) => {
+    setExpandedSections({
+      ...expandedSections,
+      [section]: !expandedSections[section],
+    });
+  };
+
+  // 指定されたカテゴリに属する項目を取得する関数
+  const getItemsByCategory = (
+    section: 'personal' | 'corporate',
+    dataType: 'income' | 'expense' | 'asset' | 'liability',
+    categoryId: string
+  ) => {
+    const dataMap = {
+      'income': incomeData,
+      'expense': expenseData,
+      'asset': assetData,
+      'liability': liabilityData,
+    };
+    
+    const data = dataMap[dataType][section];
+    return data.filter(item => (item.category || 'other') === categoryId);
+  };
+
+  // インフレ率情報の表示
+  const renderInflationInfo = () => {
+    const yearsSinceStart = 10; // 例として10年後の値を表示
+    const inflationFactor = Math.pow(1 + parameters.inflationRate / 100, yearsSinceStart);
+    const educationInflationFactor = Math.pow(1 + parameters.educationCostIncreaseRate / 100, yearsSinceStart);
+    
+    return (
+      <div className="bg-blue-50 p-4 rounded-md mb-4">
+        <h3 className="text-md font-medium text-blue-800 mb-2 flex items-center">
+          <span>インフレ計算情報</span>
+          <h3 className="h-4 w-4 ml-1" />
+        </h3>
+        <div className="text-sm text-blue-700">
+          <p className="mb-2">各項目にはインフレ率が適用されます。例として10年後の価値を表示します：</p>
+          <ul className="list-disc pl-4 space-y-1">
+            <li>現在100万円の生活費や事業運営費は10年後、実質<strong>{Math.round(100 * inflationFactor)}万円</strong>の価値になります（インフレ率{parameters.inflationRate}%適用）</li>
+            <li>現在100万円の教育費は10年後、実質<strong>{Math.round(100 * educationInflationFactor)}万円</strong>の価値になります（教育費上昇率{parameters.educationCostIncreaseRate}%適用）</li>
+          </ul>
+        </div>
+      </div>
+    );
+  };
+
+  {/* 個人キャッシュフローテーブルのレンダリング関数を修正 */}
+const renderPersonalTable = () => {
+  return (
+    <div className="space-y-3">
+      <h3 className="text-lg font-semibold">
+        個人キャッシュフロー
+       </h3>
       
-      // 生活費設定
-      const livingExpenseItem = newExpenseData.personal.find(item => item.name === '生活費');
-      if (livingExpenseItem) {
-        const baseAmount = basicInfo.monthlyLivingExpense * 12;
-        const inflationFactor = Math.pow(1 + parameters.inflationRate / 100, yearsSinceStart);
-        const inflatedAmount = Math.round(baseAmount * inflationFactor * 10) / 10;
-        
-        livingExpenseItem._rawAmounts = {
-          ...(livingExpenseItem._rawAmounts || {}),
-          [year]: baseAmount
-        };
-        livingExpenseItem.amounts[year] = inflatedAmount;
-      }
+      <div className="bg-blue-50 p-3 rounded-md text-sm text-blue-800 mb-2">
+        <p>※ 会社員・公務員（または厚生年金あり）の給与収入は手取り金額で表示・計算されます。</p>
+        <p>※ 表示されている金額には自動的にインフレ率・教育費上昇率が適用されています。</p>
+        <p>※ ローンの自動計算が設定されている場合、資産・負債の残高は自動計算されます。</p>
+      </div>
 
-      // 住居費設定
-      const housingExpenseItem = newExpenseData.personal.find(item => item.name === '住居費');
-      if (housingExpenseItem) {
-        const baseAmount = calculateHousingExpense(basicInfo.housingInfo, year);
-        housingExpenseItem._rawAmounts = {
-          ...(housingExpenseItem._rawAmounts || {}),
-          [year]: baseAmount
-        };
-        housingExpenseItem.amounts[year] = baseAmount;
+      {/* インフレ情報の表示 */}
+      {renderInflationInfo()}
+      
+      <div className="overflow-x-auto">
+        <table className="min-w-full divide-y divide-gray-200">
+          <thead className="bg-gray-50">
+            <tr>
+              <th className="px-2 py-1 text-left text-xs font-medium text-gray-500 sticky left-0 bg-gray-50 min-w-[150px]">項目</th>
+              {years.map(year => (
+                <th key={year} className="px-2 py-1 text-right text-xs font-medium text-gray-500">
+                  {year}年
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-200">
+            <tr>
+              <td className="px-2 py-1 text-xs text-gray-900 sticky left-0 bg-white">年齢</td>
+              {years.map(year => (
+                <td key={year} className="px-2 py-1 text-right text-xs text-gray-900">
+                  {calculateAge(basicInfo.startYear, basicInfo.currentAge, year)}歳
+                </td>
+              ))}
+            </tr>
+            <tr>
+              <td className="px-2 py-1 text-xs text-gray-900 sticky left-0 bg-white">
+                個人イベント
+              </td>
+              {years.map(year => (
+                <td key={year} className="px-2 py-1 text-right text-xs text-gray-600">
+                  {getLifeEventDescription(year, basicInfo, lifeEvents, 'personal')}
+                </td>
+              ))}
+            </tr>
+            <tr>
+              <td className="px-2 py-1 text-xs text-gray-900 sticky left-0 bg-white">
+                個人運用資産イベント
+              </td>
+              {years.map(year => (
+                <td key={year} className="px-2 py-1 text-right text-xs text-gray-600">
+                  {getLifeEventDescription(year, basicInfo, lifeEvents, 'personal_investment')}
+                </td>
+              ))}
+            </tr>
+            
+            {/* 収入セクション */}
+            <tr className="bg-blue-50 cursor-pointer" onClick={() => toggleSection('personalIncome')}>
+              <td colSpan={years.length + 1} className="px-2 py-1 sticky left-0 bg-blue-50">
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold text-blue-800 text-xs">
+                    収入
+                  </span>
+                  {expandedSections.personalIncome ? 
+                    <ChevronUp className="h-3 w-3 text-blue-800" /> : 
+                    <ChevronDown className="h-3 w-3 text-blue-800" />
+                  }
+                </div>
+              </td>
+            </tr>
+            
+            {expandedSections.personalIncome && (
+              <>
+                {/* 収入カテゴリ別アイテム */}
+                {Object.entries(categoryVisibility.income).map(([categoryId, isVisible]) => {
+                  if (!isVisible) return null;
+                  
+                  const items = getItemsByCategory('personal', 'income', categoryId);
+                  if (items.length === 0) return null;
+                  
+                  return items.map(item => (
+                    <tr key={item.id}>
+                      <td className="px-2 py-1 text-xs text-gray-900 sticky left-0 bg-white">
+                        <div className="flex items-center">
+                          <span className="w-2 h-2 rounded-full mr-1" style={{ backgroundColor: getCategoryColor(categoryId) }}></span>
+                          {item.name}（万円）
+                          {isNetIncomeTarget(item.name) && (
+                            <span className="ml-1 text-xs text-blue-600">※手取り</span>
+                          )}
+                        </div>
+                      </td>
+                      {years.map(year => (
+                        <td key={year} className="px-1 py-1 text-right text-xs">
+                          <input
+                            type="number"
+                            value={item.amounts[year] || ''}
+                            onChange={(e) => {
+                              const value = e.target.value === '' ? 0 : Number(e.target.value);
+                              if (!isNaN(value)) {
+                                handleAmountChange('personal', item.id, year, value);
+                              }
+                            }}
+                            onBlur={(e) => {
+                              const value = e.target.value === '' ? 0 : Number(e.target.value);
+                              if (!isNaN(value)) {
+                                handleAmountBlur('personal', item.id, year, value);
+                              }
+                            }}
+                            className={inputStyle}
+                          />
+                          {isNetIncomeTarget(item.name) && item._originalAmounts && item._originalAmounts[year] > 0 && (
+                            <div className="text-xs text-gray-500 mt-1">
+                              額面: {item._originalAmounts[year]}万円
+                            </div>
+                          )}
+                        </td>
+                      ))}
+                    </tr>
+                  ));
+                })}
+              </>
+            )}
+            
+            {/* 支出セクション */}
+            <tr className="bg-blue-50 cursor-pointer" onClick={() => toggleSection('personalExpense')}>
+              <td colSpan={years.length + 1} className="px-2 py-1 sticky left-0 bg-blue-50">
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold text-blue-800 text-xs">
+                    支出
+                    </span>
+                  {expandedSections.personalExpense ? 
+                    <ChevronUp className="h-3 w-3 text-blue-800" /> : 
+                    <ChevronDown className="h-3 w-3 text-blue-800" />
+                  }
+                </div>
+              </td>
+            </tr>
+            
+            {expandedSections.personalExpense && (
+              <>
+                {/* 生活費 */}
+                <tr className="bg-gray-100">
+                  <td colSpan={years.length + 1} className="px-2 py-1 font-medium text-gray-700 text-xs">
+                    <div className="flex items-center">
+                      <span className="w-2 h-2 rounded-full mr-1" style={{ backgroundColor: getCategoryColor('living') }}></span>
+                      生活費 <span className="text-xs text-blue-600 ml-1">（インフレ率: {parameters.inflationRate}%）</span>
+                    </div>
+                  </td>
+                </tr>
+                {getItemsByCategory('personal', 'expense', 'living').map(item => (
+                  <tr key={item.id}>
+                    <td className="px-2 py-1 text-xs text-gray-900 sticky left-0 bg-white">
+                      <div className="flex items-center">
+                        <span className="w-1.5 h-1.5 rounded-full mr-1" style={{ backgroundColor: getCategoryColor('living') }}></span>
+                        {item.name}（万円）
+                      </div>
+                    </td>
+                    {years.map(year => (
+                      <td key={year} className="px-1 py-1 text-right text-xs">
+                        <input
+                          type="number"
+                          value={item.amounts[year] || ''}
+                          onChange={(e) => {
+                            const value = e.target.value === '' ? 0 : Number(e.target.value);
+                            if (!isNaN(value)) {
+                              handleExpenseChange('personal', item.id, year, value);
+                            }
+                          }}
+                          onBlur={(e) => {
+                            const value = e.target.value === '' ? 0 : Number(e.target.value);
+                            if (!isNaN(value)) {
+                              handleExpenseBlur('personal', item.id, year, value);
+                            }
+                          }}
+                          className={inputStyle}
+                        />
+                        {item._rawAmounts && item._rawAmounts[year] !== undefined && 
+                        item._rawAmounts[year] !== item.amounts[year] && (
+                          <div className="text-xs text-gray-500 mt-1">
+                            元の値: {item._rawAmounts[year]}万円
+                          </div>
+                        )}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+                
+                {/* 住居費 */}
+                <tr className="bg-gray-100">
+                  <td colSpan={years.length + 1} className="px-2 py-1 font-medium text-gray-700 text-xs">
+                    <div className="flex items-center">
+                      <span className="w-2 h-2 rounded-full mr-1" style={{ backgroundColor: getCategoryColor('housing') }}></span>
+                      住居費 <span className="text-xs text-blue-600 ml-1">（インフレ率: {parameters.inflationRate}%）</span>
+                    </div>
+                  </td>
+                </tr>
+                {getItemsByCategory('personal', 'expense', 'housing').map(item => (
+                  <tr key={item.id}>
+                    <td className="px-2 py-1 text-xs text-gray-900 sticky left-0 bg-white">
+                      <div className="flex items-center">
+                        <span className="w-1.5 h-1.5 rounded-full mr-1" style={{ backgroundColor: getCategoryColor('housing') }}></span>
+                        {item.name}（万円）
+                      </div>
+                    </td>
+                    {years.map(year => (
+                      <td key={year} className="px-1 py-1 text-right text-xs">
+                        <input
+                          type="number"
+                          value={item.amounts[year] || ''}
+                          onChange={(e) => {
+                            const value = e.target.value === '' ? 0 : Number(e.target.value);
+                            if (!isNaN(value)) {
+                              handleExpenseChange('personal', item.id, year, value);
+                            }
+                          }}
+                          onBlur={(e) => {
+                            const value = e.target.value === '' ? 0 : Number(e.target.value);
+                            if (!isNaN(value)) {
+                              handleExpenseBlur('personal', item.id, year, value);
+                            }
+                          }}
+                          className={inputStyle}
+                        />
+                        {item._rawAmounts && item._rawAmounts[year] !== undefined && 
+                        item._rawAmounts[year] !== item.amounts[year] && (
+                          <div className="text-xs text-gray-500 mt-1">
+                            元の値: {item._rawAmounts[year]}万円
+                          </div>
+                        )}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+                
+                {/* 教育費 */}
+                <tr className="bg-gray-100">
+                  <td colSpan={years.length + 1} className="px-2 py-1 font-medium text-gray-700 text-xs">
+                    <div className="flex items-center">
+                      <span className="w-2 h-2 rounded-full mr-1" style={{ backgroundColor: getCategoryColor('education') }}></span>
+                      教育費 <span className="text-xs text-blue-600 ml-1">（教育費上昇率: {parameters.educationCostIncreaseRate}%）</span>
+                    </div>
+                  </td>
+                </tr>
+                {getItemsByCategory('personal', 'expense', 'education').map(item => (
+                  <tr key={item.id}>
+                    <td className="px-2 py-1 text-xs text-gray-900 sticky left-0 bg-white">
+                      <div className="flex items-center">
+                        <span className="w-1.5 h-1.5 rounded-full mr-1" style={{ backgroundColor: getCategoryColor('education') }}></span>
+                        {item.name}（万円）
+                      </div>
+                    </td>
+                    {years.map(year => (
+                      <td key={year} className="px-1 py-1 text-right text-xs">
+                        <input
+                          type="number"
+                          value={item.amounts[year] || ''}
+                          onChange={(e) => {
+                            const value = e.target.value === '' ? 0 : Number(e.target.value);
+                            if (!isNaN(value)) {
+                              handleExpenseChange('personal', item.id, year, value);
+                            }
+                          }}
+                          onBlur={(e) => {
+                            const value = e.target.value === '' ? 0 : Number(e.target.value);
+                            if (!isNaN(value)) {
+                              handleExpenseBlur('personal', item.id, year, value);
+                            }
+                          }}
+                          className={inputStyle}
+                        />
+                        {item._rawAmounts && item._rawAmounts[year] !== undefined && 
+                        item._rawAmounts[year] !== item.amounts[year] && (
+                          <div className="text-xs text-gray-500 mt-1">
+                            元の値: {item._rawAmounts[year]}万円
+                          </div>
+                        )}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+                
+               {/* ローン返済 */}
+<tr className="bg-gray-100">
+  <td colSpan={years.length + 1} className="px-2 py-1 font-medium text-gray-700 text-xs">
+    <div className="flex items-center">
+      <span className="w-2 h-2 rounded-full mr-1" style={{ backgroundColor: getCategoryColor('liability') }}></span>
+      ローン返済（支出）
+      <TermTooltip term="" width="wide">
+        負債の返済額です。この金額は支出として計上され、資産（現金）と負債（ローン残高）からそれぞれ同額が減少します。
+      </TermTooltip>
+    </div>
+  </td>
+</tr>
+<tr>
+  <td className="px-2 py-1 text-xs text-gray-900 sticky left-0 bg-white">
+    <div className="flex items-center">
+      <span className="w-1.5 h-1.5 rounded-full mr-1" style={{ backgroundColor: getCategoryColor('liability') }}></span>
+      ローン返済（万円）
+    </div>
+  </td>
+  {years.map(year => (
+    <td key={year} className="px-2 py-1 text-right text-xs text-red-600 font-semibold">
+      {cashFlow[year]?.loanRepayment ? `-${cashFlow[year].loanRepayment}` : '0'}
+    </td>
+  ))}
+</tr>
+                
+                {/* その他支出 */}
+                <tr className="bg-gray-100">
+                  <td colSpan={years.length + 1} className="px-2 py-1 font-medium text-gray-700 text-xs">
+                    <div className="flex items-center">
+                      <span className="w-2 h-2 rounded-full mr-1" style={{ backgroundColor: getCategoryColor('other') }}></span>
+                      その他 <span className="text-xs text-blue-600 ml-1">（インフレ率適用なし）</span>
+                    </div>
+                  </td>
+                </tr>
+                {getItemsByCategory('personal', 'expense', 'other').map(item => (
+                  <tr key={item.id}>
+                    <td className="px-2 py-1 text-xs text-gray-900 sticky left-0 bg-white">
+                      <div className="flex items-center">
+                        <span className="w-1.5 h-1.5 rounded-full mr-1" style={{ backgroundColor: getCategoryColor('other') }}></span>
+                        {item.name}（万円）
+                      </div>
+                    </td>
+                    {years.map(year => (
+                      <td key={year} className="px-1 py-1 text-right text-xs">
+                        <input
+                          type="number"
+                          value={item.amounts[year] || ''}
+                          onChange={(e) => {
+                            const value = e.target.value === '' ? 0 : Number(e.target.value);
+                            if (!isNaN(value)) {
+                              handleExpenseChange('personal', item.id, year, value);
+                            }
+                          }}
+                          onBlur={(e) => {
+                            const value = e.target.value === '' ? 0 : Number(e.target.value);
+                            if (!isNaN(value)) {
+                              handleExpenseBlur('personal', item.id, year, value);
+                            }
+                          }}
+                          className={inputStyle}
+                        />
+                        {item._rawAmounts && item._rawAmounts[year] !== undefined && 
+                        item._rawAmounts[year] !== item.amounts[year] && (
+                          <div className="text-xs text-gray-500 mt-1">
+                            元の値: {item._rawAmounts[year]}万円
+                          </div>
+                        )}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </>
+            )}
+            
+            {/* 資産セクション */}
+            <tr className="bg-blue-50 cursor-pointer" onClick={() => toggleSection('personalAsset')}>
+              <td colSpan={years.length + 1} className="px-2 py-1 sticky left-0 bg-blue-50">
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold text-blue-800 text-xs">
+                    資産
+                    </span>
+                  {expandedSections.personalAsset ? 
+                    <ChevronUp className="h-3 w-3 text-blue-800" /> : 
+                    <ChevronDown className="h-3 w-3 text-blue-800" />
+                  }
+                </div>
+              </td>
+            </tr>
+            
+            {expandedSections.personalAsset && (
+              <>
+                {Object.entries(categoryVisibility.asset).map(([categoryId, isVisible]) => {
+                  if (!isVisible) return null;
+                  
+                  const items = getItemsByCategory('personal', 'asset', categoryId);
+                  if (items.length === 0) return null;
+                  
+                  return (
+                    <React.Fragment key={categoryId}>
+                      <tr className="bg-gray-100">
+                        <td colSpan={years.length + 1} className="px-2 py-1 font-medium text-gray-700 text-xs">
+                          <div className="flex items-center">
+                            <span className="w-2 h-2 rounded-full mr-1" style={{ backgroundColor: getCategoryColor(categoryId) }}></span>
+                            {categoryId === 'asset' ? '資産' : 'その他'}
+                          </div>
+                        </td>
+                      </tr>
+                      {items.map(item => (
+                        <tr key={item.id}>
+                          <td className="px-2 py-1 text-xs text-gray-900 sticky left-0 bg-white">
+                            <div className="flex items-center">
+                              <span className="w-1.5 h-1.5 rounded-full mr-1" style={{ backgroundColor: getCategoryColor(categoryId) }}></span>
+                              {item.name}（万円）
+                            </div>
+                          </td>
+                          {years.map(year => (
+                            <td key={year} className="px-1 py-1 text-right text-xs">
+                              <input
+                                type="number"
+                                value={item.amounts[year] || ''}
+                                onChange={(e) => {
+                                  const value = e.target.value === '' ? 0 : Number(e.target.value);
+                                  if (!isNaN(value)) {
+                                    item.amounts[year] = value;
+                                    syncCashFlowFromFormData();
+                                  }
+                                }}
+                                className={inputStyle}
+                              />
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </React.Fragment>
+                  );
+                })}
+              </>
+            )}
+            
+           {/* 負債セクション */}
+<tr className="bg-blue-50 cursor-pointer" onClick={() => toggleSection('personalLiability')}>
+  <td colSpan={years.length + 1} className="px-2 py-1 sticky left-0 bg-blue-50">
+    <div className="flex items-center justify-between">
+      <span className="font-semibold text-blue-800 text-xs">
+        負債
+       </span>
+      {expandedSections.personalLiability ? 
+         <ChevronUp className="h-3 w-3 text-blue-800" /> : 
+        <ChevronDown className="h-3 w-3 text-blue-800" />
       }
+    </div>
+  </td>
+</tr>
 
-      // 教育費設定
-      const educationExpenseItem = newExpenseData.personal.find(item => item.name === '教育費');
-      if (educationExpenseItem) {
-        educationExpenseItem.category = 'education';
-        educationExpenseItem.type = 'education';
-        
-        const baseAmount = calculateEducationExpense(
-          basicInfo.children,
-          basicInfo.plannedChildren,
-          year,
-          basicInfo.currentAge,
-          basicInfo.startYear,
-          parameters.educationCostIncreaseRate
-        );
-        educationExpenseItem._rawAmounts = {
-          ...(educationExpenseItem._rawAmounts || {}),
-          [year]: baseAmount
-        };
-        educationExpenseItem.amounts[year] = baseAmount;
-      }
-    });
+{expandedSections.personalLiability && (
+  <>
+    {Object.entries(categoryVisibility.liability).map(([categoryId, isVisible]) => {
+      if (!isVisible) return null;
+      
+      const items = getItemsByCategory('personal', 'liability', categoryId);
+      if (items.length === 0) return null;
+      
+      return (
+        <React.Fragment key={categoryId}>
+          <tr className="bg-gray-100">
+            <td colSpan={years.length + 1} className="px-2 py-1 font-medium text-gray-700 text-xs">
+              <div className="flex items-center">
+                <span className="w-2 h-2 rounded-full mr-1" style={{ backgroundColor: getCategoryColor(categoryId) }}></span>
+                {categoryId === 'liability' ? '負債' : 'その他'}
+              </div>
+            </td>
+          </tr>
+          {items.map(item => (
+            <tr key={item.id}>
+              <td className="px-2 py-1 text-xs text-gray-900 sticky left-0 bg-white">
+                <div className="flex items-center">
+                  <span className="w-1.5 h-1.5 rounded-full mr-1" style={{ backgroundColor: getCategoryColor(categoryId) }}></span>
+                  {item.name}（万円）
+                  {item.autoCalculate && <span className="ml-1 text-xs text-blue-600">※自動計算</span>}
+                </div>
+              </td>
+              {years.map(year => (
+                <td key={year} className="px-1 py-1 text-right text-xs">
+                  <input
+                    type="number"
+                    value={item.amounts[year] || ''}
+                    onChange={(e) => {
+                      const value = e.target.value === '' ? 0 : Number(e.target.value);
+                      if (!isNaN(value)) {
+                        // 引き継ぎの場合、マイナス表示せず、正の値で保存する
+                        const absValue = Math.abs(value);
+                        item.amounts[year] = absValue;
+                        syncCashFlowFromFormData();
+                      }
+                    }}
+                    className={`${inputStyle} ${item.autoCalculate && item.startYear && year > item.startYear ? 'bg-gray-100' : ''}`}
+                    disabled={item.autoCalculate && item.startYear && year > item.startYear}
+                  />
+                </td>
+              ))}
+            </tr>
+          ))}
+        </React.Fragment>
+      );
+    })}
+  </>
+)}
+            
+            {/* 合計値 */}
+            <tr className="bg-gray-50 font-medium">
+              <td className="px-2 py-1 text-xs text-gray-900 sticky left-0 bg-gray-50">
+                収支
+               </td>
+              {years.map(year => {
+                const balance = cashFlow[year]?.personalBalance || 0;
+                return (
+                  <td key={year} className={`px-2 py-1 text-right text-xs ${balance >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                    {balance}万円
+                  </td>
+                );
+              })}
+            </tr>
+            <tr className="bg-gray-50 font-medium">
+              <td className="px-2 py-1 text-xs text-gray-900 sticky left-0 bg-gray-50">
+                投資額
+                <TermTooltip term="" width="narrow" icon={false}>
+                  その年に投資に回した金額
+                </TermTooltip>
+              </td>
+              {years.map(year => {
+                const investmentAmount = cashFlow[year]?.investmentAmount || 0;
+                return (
+                  <td key={year} className="px-2 py-1 text-right text-xs text-blue-600">
+                    {investmentAmount}万円
+                  </td>
+                );
+              })}
+            </tr>
+            <tr className="bg-gray-50 font-medium">
+              <td className="px-2 py-1 text-xs text-gray-900 sticky left-0 bg-gray-50">
+                運用資産
+                </td>
+              {years.map(year => {
+                const investmentAssets = cashFlow[year]?.totalInvestmentAssets || 0;
+                return (
+                  <td key={year} className="px-2 py-1 text-right text-xs text-blue-600">
+                    {investmentAssets}万円
+                  </td>
+                );
+              })}
+            </tr>
+            <tr className="bg-gray-50 font-medium">
+              <td className="px-2 py-1 text-xs text-gray-900 sticky left-0 bg-gray-50">
+                運用収益
+                </td>
+              {years.map(year => {
+                const investmentIncome = cashFlow[year]?.investmentIncome || 0;
+                return (
+                  <td key={year} className="px-2 py-1 text-right text-xs text-blue-600">
+                    {investmentIncome}万円
+                  </td>
+                );
+              })}
+            </tr>
+            <tr className="bg-gray-50 font-medium">
+              <td className="px-2 py-1 text-xs text-gray-900 sticky left-0 bg-gray-50">
+                総資産
+                </td>
+              {years.map(year => {
+                const assets = cashFlow[year]?.personalTotalAssets || 0;
+                return (
+                  <td key={year} className={`px-2 py-1 text-right text-xs ${assets >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                    {assets}万円
+                  </td>
+                );
+              })}
+            </tr>
+            <tr className="bg-gray-50 font-medium">
+              <td className="px-2 py-1 text-xs text-gray-900 sticky left-0 bg-gray-50">
+                負債総額
+                </td>
+              {years.map(year => {
+                const liabilityTotal = cashFlow[year]?.personalLiabilityTotal || 0;
+                return (
+                  <td key={year} className="px-2 py-1 text-right text-xs text-red-600">
+                    {liabilityTotal > 0 ? liabilityTotal : 0}万円
+                  </td>
+                );
+              })}
+            </tr>
+            <tr className="bg-gray-50 font-medium">
+              <td className="px-2 py-1 text-xs text-gray-900 sticky left-0 bg-gray-50">
+                純資産
+                </td>
+              {years.map(year => {
+                const netAssets = cashFlow[year]?.personalNetAssets || 0;
+                return (
+                  <td key={year} className={`px-2 py-1 text-right text-xs font-bold ${netAssets >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                    {netAssets}万円
+                  </td>
+                );
+              })}
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+};
 
-    // 資産データの初期化
-    const newAssetData = { ...state.assetData };
-    if (basicInfo.housingInfo.type === 'own' && basicInfo.housingInfo.own) {
-      const realEstateItem = newAssetData.personal.find(item => item.name === '不動産');
-      if (realEstateItem) {
-        realEstateItem.amounts[basicInfo.housingInfo.own.purchaseYear] = 
-          basicInfo.housingInfo.own.purchasePrice;
-      }
-    }
+{/* 法人キャッシュフローテーブルの修正も同様に行う */}
+const renderCorporateTable = () => {
+  return (
+    <div className="space-y-3">
+      <h3 className="text-lg font-semibold">
+        法人キャッシュフロー
+       </h3>
+      
+      <div className="bg-blue-50 p-3 rounded-md text-sm text-blue-800 mb-2">
+        <p>※ 表示されている金額には自動的にインフレ率が適用されています。</p>
+        <p>※ ローンの自動計算が設定されている場合、資産・負債の残高は自動計算されます。</p>
+      </div>
+      
+      <div className="overflow-x-auto">
+        <table className="min-w-full divide-y divide-gray-200">
+          <thead className="bg-gray-50">
+            <tr>
+              <th className="px-2 py-1 text-left text-xs font-medium text-gray-500 sticky left-0 bg-gray-50 min-w-[150px]">項目</th>
+              {years.map(year => (
+                <th key={year} className="px-2 py-1 text-right text-xs font-medium text-gray-500">
+                  {year}年
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-200">
+            <tr>
+              <td className="px-2 py-1 text-xs text-gray-900 sticky left-0 bg-white">
+                法人イベント
+                </td>
+              {years.map(year => (
+                <td key={year} className="px-2 py-1 text-right text-xs text-gray-600">
+                  {getLifeEventDescription(year, basicInfo, lifeEvents, 'corporate')}
+                </td>
+              ))}
+            </tr>
+            <tr>
+              <td className="px-2 py-1 text-xs text-gray-900 sticky left-0 bg-white">
+                法人運用資産イベント
+                </td>
+              {years.map(year => (
+                <td key={year} className="px-2 py-1 text-right text-xs text-gray-600">
+                  {getLifeEventDescription(year, basicInfo, lifeEvents, 'corporate_investment')}
+                </td>
+              ))}
+            </tr>
+            
+            {/* 収入セクション */}
+            <tr className="bg-blue-50 cursor-pointer" onClick={() => toggleSection('corporateIncome')}>
+              <td colSpan={years.length + 1} className="px-2 py-1 sticky left-0 bg-blue-50">
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold text-blue-800 text-xs">
+                    収入
+                    </span>
+                  {expandedSections.corporateIncome ? 
+                    <ChevronUp className="h-3 w-3 text-blue-800" /> : 
+                    <ChevronDown className="h-3 w-3 text-blue-800" />
+                  }
+                </div>
+              </td>
+            </tr>
+            
+            {expandedSections.corporateIncome && (
+              <>
+                {Object.entries(categoryVisibility.income).map(([categoryId, isVisible]) => {
+                  if (!isVisible) return null;
+                  
+                  const items = getItemsByCategory('corporate', 'income', categoryId);
+                  if (items.length === 0) return null;
+                  
+                  return items.map(item => (
+                    <tr key={item.id}>
+                      <td className="px-2 py-1 text-xs text-gray-900 sticky left-0 bg-white">
+                        <div className="flex items-center">
+                          <span className="w-1.5 h-1.5 rounded-full mr-1" style={{ backgroundColor: getCategoryColor(categoryId) }}></span>
+                          {item.name}（万円）
+                        </div>
+                      </td>
+                      {years.map(year => (
+                        <td key={year} className="px-1 py-1 text-right text-xs">
+                          <input
+                            type="number"
+                            value={item.amounts[year] || ''}
+                            onChange={(e) => {
+                              const value = e.target.value === '' ? 0 : Number(e.target.value);
+                              if (!isNaN(value)) {
+                                item.amounts[year] = value;
+                                syncCashFlowFromFormData();
+                              }
+                            }}
+                            className={inputStyle}
+                          />
+                        </td>
+                      ))}
+                    </tr>
+                  ));
+                })}
+              </>
+            )}
+            
+            {/* 支出セクション - 法人用 */}
+            <tr className="bg-blue-50 cursor-pointer" onClick={() => toggleSection('corporateExpense')}>
+              <td colSpan={years.length + 1} className="px-2 py-1 sticky left-0 bg-blue-50">
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold text-blue-800 text-xs">
+                    支出
+                    </span>
+                  {expandedSections.corporateExpense ? 
+                    <ChevronUp className="h-3 w-3 text-blue-800" /> : 
+                    <ChevronDown className="h-3 w-3 text-blue-800" />
+                  }
+                </div>
+              </td>
+            </tr>
+            
+       {expandedSections.corporateExpense && (
+    <>
+      {/* 事業運営費 */}
+      <tr className="bg-gray-100">
+        <td colSpan={years.length + 1} className="px-2 py-1 font-medium text-gray-700 text-xs">
+          <div className="flex items-center">
+            <span className="w-2 h-2 rounded-full mr-1" style={{ backgroundColor: getCategoryColor('business') }}></span>
+            事業運営費 <span className="text-xs text-blue-600 ml-1">（インフレ率: {parameters.inflationRate}%）</span>
+          </div>
+        </td>
+      </tr>
+      {getItemsByCategory('corporate', 'expense', 'business').map(item => (
+        <tr key={item.id}>
+          <td className="px-2 py-1 text-xs text-gray-900 sticky left-0 bg-white">
+            <div className="flex items-center">
+              <span className="w-1.5 h-1.5 rounded-full mr-1" style={{ backgroundColor: getCategoryColor('business') }}></span>
+              {item.name}（万円）
+            </div>
+          </td>
+          {years.map(year => (
+            <td key={year} className="px-1 py-1 text-right text-xs">
+              <input
+                type="number"
+                value={item.amounts[year] || ''}
+                onChange={(e) => {
+                  const value = e.target.value === '' ? 0 : Number(e.target.value);
+                  if (!isNaN(value)) {
+                    handleExpenseChange('corporate', item.id, year, value);
+                  }
+                }}
+                className={inputStyle}
+              />
+            </td>
+          ))}
+        </tr>
+      ))}
 
-    // 負債データの初期化
-    const newLiabilityData = { ...state.liabilityData };
-    if (basicInfo.housingInfo.type === 'own' && basicInfo.housingInfo.own) {
-      const loanItem = newLiabilityData.personal.find(item => item.name === 'ローン');
-      if (loanItem) {
-        loanItem.amounts[basicInfo.housingInfo.own.purchaseYear] = 
-          basicInfo.housingInfo.own.loanAmount;
-      }
-    }
+      {/* オフィス・設備費 */}
+      <tr className="bg-gray-100">
+        <td colSpan={years.length + 1} className="px-2 py-1 font-medium text-gray-700 text-xs">
+          <div className="flex items-center">
+            <span className="w-2 h-2 rounded-full mr-1" style={{ backgroundColor: getCategoryColor('office') }}></span>
+            オフィス・設備費 <span className="text-xs text-blue-600 ml-1">（インフレ率: {parameters.inflationRate}%）</span>
+          </div>
+        </td>
+      </tr>
+      {getItemsByCategory('corporate', 'expense', 'office').map(item => (
+        <tr key={item.id}>
+          <td className="px-2 py-1 text-xs text-gray-900 sticky left-0 bg-white">
+            <div className="flex items-center">
+              <span className="w-1.5 h-1.5 rounded-full mr-1" style={{ backgroundColor: getCategoryColor('office') }}></span>
+              {item.name}（万円）
+            </div>
+          </td>
+          {years.map(year => (
+            <td key={year} className="px-1 py-1 text-right text-xs">
+              <input
+                type="number"
+                value={item.amounts[year] || ''}
+                onChange={(e) => {
+                  const value = e.target.value === '' ? 0 : Number(e.target.value);
+                  if (!isNaN(value)) {
+                    handleExpenseChange('corporate', item.id, year, value);
+                  }
+                }}
+                className={inputStyle}
+              />
+            </td>
+          ))}
+        </tr>
+      ))}
 
-    set({
-      incomeData: newIncomeData,
-      expenseData: newExpenseData,
-      assetData: newAssetData,
-      liabilityData: newLiabilityData,
-    });
-  },
-}));
+      {/* 法人原価 */}
+      <tr className="bg-gray-100">
+        <td colSpan={years.length + 1} className="px-2 py-1 font-medium text-gray-700 text-xs">
+          <div className="flex items-center">
+            <span className="w-2 h-2 rounded-full mr-1" style={{ backgroundColor: getCategoryColor('cost') }}></span>
+            法人原価 <span className="text-xs text-green-600 ml-1">（売上比例・自動計算）</span>
+          </div>
+        </td>
+      </tr>
+      {getItemsByCategory('corporate', 'expense', 'cost').map(item => (
+        <tr key={item.id}>
+          <td className="px-2 py-1 text-xs text-gray-900 sticky left-0 bg-white">
+            <div className="flex items-center">
+              <span className="w-1.5 h-1.5 rounded-full mr-1" style={{ backgroundColor: getCategoryColor('cost') }}></span>
+              {item.name}（万円）
+            </div>
+          </td>
+          {years.map(year => (
+            <td key={year} className="px-1 py-1 text-right text-xs">
+              <input
+                type="number"
+                value={item.amounts[year] || ''}
+                disabled={item._costSettings} // 原価設定済みの場合は手動入力を無効化
+                onChange={(e) => {
+                  const value = e.target.value === '' ? 0 : Number(e.target.value);
+                  if (!isNaN(value)) {
+                    handleExpenseChange('corporate', item.id, year, value);
+                  }
+                }}
+                className={`${inputStyle} ${item._costSettings ? 'bg-green-50 border-green-200 text-green-800' : ''}`}
+              />
+            </td>
+          ))}
+        </tr>
+      ))}
+                
+                {/* ローン返済 - 法人 */}
+                <tr className="bg-gray-100">
+                  <td colSpan={years.length + 1} className="px-2 py-1 font-medium text-gray-700 text-xs">
+                    <div className="flex items-center">
+                      <span className="w-2 h-2 rounded-full mr-1" style={{ backgroundColor: getCategoryColor('liability') }}></span>
+                      ローン返済
+                    </div>
+                  </td>
+                </tr>
+                <tr>
+                  <td className="px-2 py-1 text-xs text-gray-900 sticky left-0 bg-white">
+                    <div className="flex items-center">
+                      <span className="w-1.5 h-1.5 rounded-full mr-1" style={{ backgroundColor: getCategoryColor('liability') }}></span>
+                      ローン返済（万円）
+                    </div>
+                  </td>
+                  {years.map(year => (
+                    <td key={year} className="px-2 py-1 text-right text-xs text-red-600 font-semibold">
+                      {cashFlow[year]?.corporateLoanRepayment ? `-${cashFlow[year].corporateLoanRepayment}` : 0}
+                    </td>
+                  ))}
+                </tr>
+                
+                {/* その他支出 - 法人 */}
+                <tr className="bg-gray-100">
+                  <td colSpan={years.length + 1} className="px-2 py-1 font-medium text-gray-700 text-xs">
+                    <div className="flex items-center">
+                      <span className="w-2 h-2 rounded-full mr-1" style={{ backgroundColor: getCategoryColor('other') }}></span>
+                      その他 <span className="text-xs text-blue-600 ml-1">（インフレ率適用なし）</span>
+                    </div>
+                  </td>
+                </tr>
+                {getItemsByCategory('corporate', 'expense', 'other').map(item => (
+                  <tr key={item.id}>
+                    <td className="px-2 py-1 text-xs text-gray-900 sticky left-0 bg-white">
+                      <div className="flex items-center">
+                        <span className="w-1.5 h-1.5 rounded-full mr-1" style={{ backgroundColor: getCategoryColor('other') }}></span>
+                        {item.name}（万円）
+                      </div>
+                    </td>
+                    {years.map(year => (
+                      <td key={year} className="px-1 py-1 text-right text-xs">
+                        <input
+                          type="number"
+                          value={item.amounts[year] || ''}
+                          onChange={(e) => {
+                            const value = e.target.value === '' ? 0 : Number(e.target.value);
+                            if (!isNaN(value)) {
+                              handleExpenseChange('corporate', item.id, year, value);
+                            }
+                          }}
+                          onBlur={(e) => {
+                            const value = e.target.value === '' ? 0 : Number(e.target.value);
+                            if (!isNaN(value)) {
+                              handleExpenseBlur('corporate', item.id, year, value);
+                            }
+                          }}
+                          className={inputStyle}
+                        />
+                        {item._rawAmounts && item._rawAmounts[year] !== undefined && 
+                        item._rawAmounts[year] !== item.amounts[year] && (
+                          <div className="text-xs text-gray-500 mt-1">
+                            元の値: {item._rawAmounts[year]}万円
+                          </div>
+                        )}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </>
+            )}
+            
+            {/* 法人資産セクション */}
+            <tr className="bg-blue-50 cursor-pointer" onClick={() => toggleSection('corporateAsset')}>
+              <td colSpan={years.length + 1} className="px-2 py-1 sticky left-0 bg-blue-50">
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold text-blue-800 text-xs">
+                    資産
+                     </span>
+                  {expandedSections.corporateAsset ? 
+                    <ChevronUp className="h-3 w-3 text-blue-800" /> : 
+                    <ChevronDown className="h-3 w-3 text-blue-800" />
+                  }
+                </div>
+              </td>
+            </tr>
+            
+            {expandedSections.corporateAsset && (
+              <>
+                {Object.entries(categoryVisibility.asset).map(([categoryId, isVisible]) => {
+                  if (!isVisible) return null;
+                  
+                  const items = getItemsByCategory('corporate', 'asset', categoryId);
+                  if (items.length === 0) return null;
+                  
+                  return (
+                    <React.Fragment key={categoryId}>
+                      <tr className="bg-gray-100">
+                        <td colSpan={years.length + 1} className="px-2 py-1 font-medium text-gray-700 text-xs">
+                          <div className="flex items-center">
+                            <span className="w-2 h-2 rounded-full mr-1" style={{ backgroundColor: getCategoryColor(categoryId) }}></span>
+                            {categoryId === 'asset' ? '資産' : 'その他'}
+                          </div>
+                        </td>
+                      </tr>
+                      {items.map(item => (
+                        <tr key={item.id}>
+                          <td className="px-2 py-1 text-xs text-gray-900 sticky left-0 bg-white">
+                            <div className="flex items-center">
+                              <span className="w-1.5 h-1.5 rounded-full mr-1" style={{ backgroundColor: getCategoryColor(categoryId) }}></span>
+                              {item.name}（万円）
+                            </div>
+                          </td>
+                          {years.map(year => (
+                            <td key={year} className="px-1 py-1 text-right text-xs">
+                              <input
+                                type="number"
+                                value={item.amounts[year] || ''}
+                                onChange={(e) => {
+                                  const value = e.target.value === '' ? 0 : Number(e.target.value);
+                                  if (!isNaN(value)) {
+                                    item.amounts[year] = value;
+                                    syncCashFlowFromFormData();
+                                  }
+                                }}
+                                className={inputStyle}
+                              />
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </React.Fragment>
+                  );
+                })}
+              </>
+            )}
+            
+            {/* 法人負債セクション */}
+            <tr className="bg-blue-50 cursor-pointer" onClick={() => toggleSection('corporateLiability')}>
+              <td colSpan={years.length + 1} className="px-2 py-1 sticky left-0 bg-blue-50">
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold text-blue-800 text-xs">
+                    負債
+                    </span>
+                  {expandedSections.corporateLiability ? 
+                    <ChevronUp className="h-3 w-3 text-blue-800" /> : 
+                    <ChevronDown className="h-3 w-3 text-blue-800" />
+                  }
+                </div>
+              </td>
+            </tr>
+            
+            {expandedSections.corporateLiability && (
+              <>
+               {Object.entries(categoryVisibility.liability).map(([categoryId, isVisible]) => {
+                  if (!isVisible) return null;
+                  
+                  const items = getItemsByCategory('corporate', 'liability', categoryId);
+                  if (items.length === 0) return null;
+                  
+                  return (
+                    <React.Fragment key={categoryId}>
+                      <tr className="bg-gray-100">
+                        <td colSpan={years.length + 1} className="px-2 py-1 font-medium text-gray-700 text-xs">
+                          <div className="flex items-center">
+                            <span className="w-2 h-2 rounded-full mr-1" style={{ backgroundColor: getCategoryColor(categoryId) }}></span>
+                            {categoryId === 'liability' ? '負債' : 'その他'}
+                          </div>
+                        </td>
+                      </tr>
+                      {items.map(item => (
+                        <tr key={item.id}>
+                          <td className="px-2 py-1 text-xs text-gray-900 sticky left-0 bg-white">
+                            <div className="flex items-center">
+                              <span className="w-1.5 h-1.5 rounded-full mr-1" style={{ backgroundColor: getCategoryColor(categoryId) }}></span>
+                              {item.name}（万円）
+                              {item.autoCalculate && <span className="ml-1 text-xs text-blue-600">※自動計算</span>}
+                            </div>
+                          </td>
+                          {years.map(year => (
+                            <td key={year} className="px-1 py-1 text-right text-xs">
+                              <input
+                                type="number"
+                                value={item.amounts[year] || ''}
+                                onChange={(e) => {
+                                  const value = e.target.value === '' ? 0 : Number(e.target.value);
+                                  if (!isNaN(value)) {
+                                    item.amounts[year] = value;
+                                    syncCashFlowFromFormData();
+                                  }
+                                }}
+                                className={`${inputStyle} ${item.autoCalculate && item.startYear && year > item.startYear ? 'bg-gray-100' : ''}`}
+                                disabled={item.autoCalculate && item.startYear && year > item.startYear}
+                              />
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </React.Fragment>
+                  );
+                })}
+              </>
+            )}
+            
+{/* 法人合計値 */}
+<tr className="bg-gray-50 font-medium">
+  <td className="px-2 py-1 text-xs text-gray-900 sticky left-0 bg-gray-50">
+    収支
+    </td>
+  {years.map(year => {
+    const balance = cashFlow[year]?.corporateBalance || 0;
+    return (
+      <td key={year} className={`px-2 py-1 text-right text-xs ${balance >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+        {balance}万円
+      </td>
+    );
+  })}
+</tr>
+<tr className="bg-gray-50 font-medium">
+  <td className="px-2 py-1 text-xs text-gray-900 sticky left-0 bg-gray-50">
+    投資額
+    <TermTooltip term="" width="narrow" icon={false}>
+      その年に投資に回した金額
+    </TermTooltip>
+  </td>
+  {years.map(year => {
+    const investmentAmount = cashFlow[year]?.corporateInvestmentAmount || 0;
+    return (
+      <td key={year} className="px-2 py-1 text-right text-xs text-blue-600">
+        {investmentAmount}万円
+      </td>
+    );
+  })}
+</tr>
+<tr className="bg-gray-50 font-medium">
+  <td className="px-2 py-1 text-xs text-gray-900 sticky left-0 bg-gray-50">
+    運用資産
+    </td>
+  {years.map(year => {
+    const investmentAssets = cashFlow[year]?.corporateTotalInvestmentAssets || 0;
+    return (
+      <td key={year} className="px-2 py-1 text-right text-xs text-blue-600">
+        {investmentAssets}万円
+      </td>
+    );
+  })}
+</tr>
+<tr className="bg-gray-50 font-medium">
+  <td className="px-2 py-1 text-xs text-gray-900 sticky left-0 bg-gray-50">
+    運用収益
+    </td>
+  {years.map(year => {
+    const investmentIncome = cashFlow[year]?.corporateInvestmentIncome || 0;
+    return (
+      <td key={year} className="px-2 py-1 text-right text-xs text-blue-600">
+        {investmentIncome}万円
+      </td>
+    );
+  })}
+</tr>
+<tr className="bg-gray-50 font-medium">
+  <td className="px-2 py-1 text-xs text-gray-900 sticky left-0 bg-gray-50">
+    総資産
+  </td>
+  {years.map(year => {
+    const assets = cashFlow[year]?.corporateTotalAssets || 0;
+    return (
+      <td key={year} className={`px-2 py-1 text-right text-xs ${assets >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+        {assets}万円
+      </td>
+    );
+  })}
+</tr>
+<tr className="bg-gray-50 font-medium">
+  <td className="px-2 py-1 text-xs text-gray-900 sticky left-0 bg-gray-50">
+    負債総額
+    </td>
+  {years.map(year => {
+    const liabilityTotal = cashFlow[year]?.corporateLiabilityTotal || 0;
+    return (
+      <td key={year} className="px-2 py-1 text-right text-xs text-red-600">
+        {liabilityTotal > 0 ? liabilityTotal : 0}万円
+      </td>
+    );
+  })}
+</tr>
+<tr className="bg-gray-50 font-medium">
+  <td className="px-2 py-1 text-xs text-gray-900 sticky left-0 bg-gray-50">
+    純資産
+    </td>
+  {years.map(year => {
+    const netAssets = cashFlow[year]?.corporateNetAssets || 0;
+    return (
+      <td key={year} className={`px-2 py-1 text-right text-xs font-bold ${netAssets >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+        {netAssets}万円
+      </td>
+    );
+  })}
+</tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+};
+
+  return (
+    <div className="space-y-4">
+      <div className="flex justify-between items-center">
+        <h2 className="text-xl font-bold">
+          キャッシュフロー
+          </h2>
+        <div className="flex gap-2">
+          <button
+            onClick={handleExportCSV}
+            className="flex items-center gap-2 px-3 py-1 text-sm bg-green-500 text-white rounded-md hover:bg-green-600"
+          >
+            <Download className="h-4 w-4" />
+            CSVエクスポート
+          </button>
+        </div>
+      </div>
+
+      <div className="space-y-6">
+        {renderPersonalTable()}
+        {renderCorporateTable()}
+      </div>
+
+      <div className="flex justify-between space-x-4">
+        <button
+          type="button"
+          onClick={handleBack}
+          className="px-4 py-2 bg-gray-500 text-white rounded-md hover:bg-gray-600"
+        >
+          戻る
+        </button>
+        <button
+          type="button"
+          onClick={handleNext}
+          className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600"
+        >
+          次へ
+        </button>
+      </div>
+
+      {/* コンテキストヘルプコンポーネントを追加 */}
+      <ContextHelp 
+        tabs={[
+          { id: 'terms', label: '用語解説', content: cashFlowTermsContent },
+          { id: 'formulas', label: '計算式', content: cashFlowFormulasContent }
+        ]} 
+      />
+    </div>
+  );
+}

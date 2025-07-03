@@ -10,6 +10,7 @@ export const MAIN_CATEGORIES = [
   { id: 'liability', name: '負債' },
   { id: 'business', name: '事業運営費' }, // 法人用カテゴリを追加
   { id: 'office', name: 'オフィス・設備費' }, // 法人用カテゴリを追加
+  { id: 'cost', name: '法人原価' }, // 法人原価カテゴリを追加
   { id: 'other', name: 'その他' },
 ];
 
@@ -31,6 +32,7 @@ export const EXPENSE_CATEGORIES = [
 export const CORPORATE_EXPENSE_CATEGORIES = [
   { id: 'business', name: '事業運営費' },
   { id: 'office', name: 'オフィス・設備費' },
+  { id: 'cost', name: '法人原価' }, // 法人原価カテゴリを追加
   { id: 'other', name: 'その他' },
 ];
 

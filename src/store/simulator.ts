@@ -263,17 +263,106 @@ interface SimulatorState {
   clearHistory: () => void;
 }
 
-// 教育費計算用のダミー関数（実装は別ファイルにある想定）
+// 教育費計算関数（元のファイルから抽出）
 function calculateEducationExpense(
-  children: any[],
-  plannedChildren: any[],
+  children: BasicInfo['children'],
+  plannedChildren: BasicInfo['plannedChildren'],
   year: number,
   currentAge: number,
   startYear: number,
   educationCostIncreaseRate: number
 ): number {
-  // ダミー実装
-  return 0;
+  const yearsSinceStart = year - startYear;
+  const educationInflationFactor = Math.pow(1 + educationCostIncreaseRate / 100, yearsSinceStart);
+  
+  const existingChildrenExpense = children.reduce((total, child) => {
+    const childAge = child.currentAge + yearsSinceStart;
+    let expense = 0;
+
+    const costs = {
+     nursery: { '公立': 29.9, '私立': 35.3, '行かない': 0 },
+        preschool: { '公立': 18.4, '私立': 34.7, '行かない': 0 },
+        elementary: { '公立': 33.6, '私立': 182.8, '行かない': 0 },
+        juniorHigh: { '公立': 54.2, '私立': 156, '行かない': 0 },
+        highSchool: { '公立': 59.7, '私立': 103, '行かない': 0 },
+        university: {
+          '国立大学（文系）': 60.6,
+          '国立大学（理系）': 60.6,
+          '私立大学（文系）': 102.6,
+          '私立大学（理系）': 135.4,
+          '行かない': 0
+      }
+    };
+
+    if (childAge >= 0 && childAge <= 2) {
+      expense = costs.nursery[child.educationPlan.nursery] || 0;
+    }
+    if (childAge >= 3 && childAge <= 5) {
+      expense = costs.preschool[child.educationPlan.preschool] || 0;
+    }
+    if (childAge >= 6 && childAge <= 11) {
+      expense = costs.elementary[child.educationPlan.elementary] || 0;
+    }
+    if (childAge >= 12 && childAge <= 14) {
+      expense = costs.juniorHigh[child.educationPlan.juniorHigh] || 0;
+    }
+    if (childAge >= 15 && childAge <= 17) {
+      expense = costs.highSchool[child.educationPlan.highSchool] || 0;
+    }
+    if (childAge >= 18 && childAge <= 21) {
+      expense = costs.university[child.educationPlan.university] || 0;
+    }
+
+    const inflatedExpense = expense * educationInflationFactor;
+    return total + inflatedExpense;
+  }, 0);
+
+  const plannedChildrenExpense = plannedChildren.reduce((total, child) => {
+    if (yearsSinceStart >= child.yearsFromNow) {
+      const childAge = yearsSinceStart - child.yearsFromNow;
+      let expense = 0;
+
+      const costs = {
+        nursery: { '公立': 29.9, '私立': 35.3, '行かない': 0 },
+        preschool: { '公立': 18.4, '私立': 34.7, '行かない': 0 },
+        elementary: { '公立': 33.6, '私立': 182.8, '行かない': 0 },
+        juniorHigh: { '公立': 54.2, '私立': 156, '行かない': 0 },
+        highSchool: { '公立': 59.7, '私立': 103, '行かない': 0 },
+        university: {
+          '国立大学（文系）': 60.6,
+          '国立大学（理系）': 60.6,
+          '私立大学（文系）': 102.6,
+          '私立大学（理系）': 135.4,
+          '行かない': 0
+        }
+      };
+
+      if (childAge >= 0 && childAge <= 2) {
+        expense = costs.nursery[child.educationPlan.nursery] || 0;
+      }
+      if (childAge >= 3 && childAge <= 5) {
+        expense = costs.preschool[child.educationPlan.preschool] || 0;
+      }
+      if (childAge >= 6 && childAge <= 11) {
+        expense = costs.elementary[child.educationPlan.elementary] || 0;
+      }
+      if (childAge >= 12 && childAge <= 14) {
+        expense = costs.juniorHigh[child.educationPlan.juniorHigh] || 0;
+      }
+      if (childAge >= 15 && childAge <= 17) {
+        expense = costs.highSchool[child.educationPlan.highSchool] || 0;
+      }
+      if (childAge >= 18 && childAge <= 21) {
+        expense = costs.university[child.educationPlan.university] || 0;
+      }
+
+      const inflatedExpense = expense * educationInflationFactor;
+      return total + inflatedExpense;
+    }
+    return total;
+  }, 0);
+
+  return Number((existingChildrenExpense + plannedChildrenExpense).toFixed(1));
 }
 
 export const useSimulatorStore = create<SimulatorState>((set, get) => ({
@@ -1186,7 +1275,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
         housingExpenseItem.amounts[year] = baseAmount;
       }
 
-      // 教育費設定
+      // 教育費設定（元のファイルから抽出した部分）
       const educationExpenseItem = newExpenseData.personal.find(item => item.name === '教育費');
       if (educationExpenseItem) {
         educationExpenseItem.category = 'education';

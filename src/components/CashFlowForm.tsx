@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useSimulatorStore } from '@/store/simulator';
-import { Download, ChevronDown, ChevronUp, Info } from 'lucide-react';
+import { Download, ChevronDown, ChevronUp, Info, Settings } from 'lucide-react';
 import { 
   MAIN_CATEGORIES,
   INCOME_CATEGORIES, 
@@ -10,7 +10,7 @@ import {
   LIABILITY_CATEGORIES 
 } from '@/components/ui/category-select';
 // ES Modules形式でインポート
-import { calculateNetIncome } from '@/lib/calculations';
+import { calculateNetIncome, CorporateTaxSettings } from '@/lib/calculations';
 // ヘルプ関連のインポート
 import { TermTooltip } from '@/components/common/TermTooltip';
 import { ContextHelp } from '@/components/common/ContextHelp';
@@ -71,6 +71,179 @@ function getLifeEventDescription(
   return events.join('、');
 }
 
+// **新機能**: 法人税設定モーダルコンポーネント
+interface CorporateTaxSettingsModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  settings: CorporateTaxSettings;
+  onSave: (settings: CorporateTaxSettings) => void;
+}
+
+function CorporateTaxSettingsModal({ isOpen, onClose, settings, onSave }: CorporateTaxSettingsModalProps) {
+  const [formData, setFormData] = useState<CorporateTaxSettings>(settings);
+
+  useEffect(() => {
+    setFormData(settings);
+  }, [settings]);
+
+  const handleSave = () => {
+    onSave(formData);
+    onClose();
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+      <div className="bg-white rounded-lg p-6 w-full max-w-md max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-semibold flex items-center">
+            <Settings className="h-5 w-5 mr-2" />
+            法人税設定
+          </h3>
+          <button
+            onClick={onClose}
+            className="text-gray-400 hover:text-gray-600"
+          >
+            ×
+          </button>
+        </div>
+
+        <div className="space-y-4">
+          {/* 法人税設定 */}
+          <div className="border-b pb-4">
+            <h4 className="font-medium text-gray-800 mb-3">法人税</h4>
+            <div className="space-y-3">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  {formData.corporateTaxThreshold}万円以下の税率（%）
+                </label>
+                <input
+                  type="number"
+                  step="0.1"
+                  value={formData.corporateTaxRateLow}
+                  onChange={(e) => setFormData({
+                    ...formData,
+                    corporateTaxRateLow: Number(e.target.value)
+                  })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  {formData.corporateTaxThreshold}万円超の税率（%）
+                </label>
+                <input
+                  type="number"
+                  step="0.1"
+                  value={formData.corporateTaxRateHigh}
+                  onChange={(e) => setFormData({
+                    ...formData,
+                    corporateTaxRateHigh: Number(e.target.value)
+                  })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  軽減税率の適用閾値（万円）
+                </label>
+                <input
+                  type="number"
+                  value={formData.corporateTaxThreshold}
+                  onChange={(e) => setFormData({
+                    ...formData,
+                    corporateTaxThreshold: Number(e.target.value)
+                  })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* 地方法人税設定 */}
+          <div className="border-b pb-4">
+            <h4 className="font-medium text-gray-800 mb-3">地方法人税</h4>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                地方法人税率（法人税額の%）
+              </label>
+              <input
+                type="number"
+                step="0.1"
+                value={formData.localCorporateTaxRate}
+                onChange={(e) => setFormData({
+                  ...formData,
+                  localCorporateTaxRate: Number(e.target.value)
+                })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+              />
+            </div>
+          </div>
+
+          {/* 法人住民税設定 */}
+          <div>
+            <h4 className="font-medium text-gray-800 mb-3">法人住民税</h4>
+            <div className="space-y-3">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  均等割（万円）※赤字でも発生
+                </label>
+                <input
+                  type="number"
+                  step="0.1"
+                  value={formData.residentTaxEqualRate}
+                  onChange={(e) => setFormData({
+                    ...formData,
+                    residentTaxEqualRate: Number(e.target.value)
+                  })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  資本金1億円以下の法人の標準額：7万円
+                </p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  法人税割（法人税額の%）
+                </label>
+                <input
+                  type="number"
+                  step="0.1"
+                  value={formData.residentTaxProportionalRate}
+                  onChange={(e) => setFormData({
+                    ...formData,
+                    residentTaxProportionalRate: Number(e.target.value)
+                  })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  標準税率：7.0%（都道府県1.0%＋市町村6.0%）
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex justify-end space-x-3 mt-6">
+          <button
+            onClick={onClose}
+            className="px-4 py-2 text-sm bg-gray-500 text-white rounded-md hover:bg-gray-600"
+          >
+            キャンセル
+          </button>
+          <button
+            onClick={handleSave}
+            className="px-4 py-2 text-sm bg-blue-500 text-white rounded-md hover:bg-blue-600"
+          >
+            保存
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function CashFlowForm() {
   const { 
     basicInfo, 
@@ -85,6 +258,7 @@ export function CashFlowForm() {
     liabilityData,
     setCurrentStep,
     syncCashFlowFromFormData,
+    updateCorporateTaxSettings, // **新機能**: 法人税設定更新関数
   } = useSimulatorStore();
   
   // コンポーネントの状態
@@ -107,6 +281,9 @@ export function CashFlowForm() {
     asset: { asset: true, other: true },
     liability: { liability: true, other: true }
   });
+
+  // **新機能**: 法人税設定モーダルの状態管理
+  const [isTaxSettingsModalOpen, setIsTaxSettingsModalOpen] = useState(false);
   
   const yearsUntilDeath = basicInfo.deathAge - basicInfo.currentAge;
   const years = Array.from(
@@ -1057,17 +1234,28 @@ const renderPersonalTable = () => {
   );
 };
 
-{/* 法人キャッシュフローテーブルの修正も同様に行う */}
+{/* **新機能**: 法人税設定ボタン付きの法人キャッシュフローテーブル */}
 const renderCorporateTable = () => {
   return (
     <div className="space-y-3">
-      <h3 className="text-lg font-semibold">
-        法人キャッシュフロー
-       </h3>
+      <div className="flex items-center justify-between">
+        <h3 className="text-lg font-semibold">
+          法人キャッシュフロー
+        </h3>
+        {/* **新機能**: 税金設定ボタン */}
+        <button
+          onClick={() => setIsTaxSettingsModalOpen(true)}
+          className="flex items-center gap-2 px-3 py-1 text-sm bg-orange-500 text-white rounded-md hover:bg-orange-600"
+        >
+          <Settings className="h-4 w-4" />
+          税金設定
+        </button>
+      </div>
       
       <div className="bg-blue-50 p-3 rounded-md text-sm text-blue-800 mb-2">
         <p>※ 表示されている金額には自動的にインフレ率が適用されています。</p>
         <p>※ ローンの自動計算が設定されている場合、資産・負債の残高は自動計算されます。</p>
+        <p>※ 法人税は税引き前利益に基づいて自動計算されます。</p>
       </div>
       
       <div className="overflow-x-auto">
@@ -1351,6 +1539,143 @@ const renderCorporateTable = () => {
                 ))}
               </>
             )}
+
+            {/* **新機能**: 法人税セクション */}
+            <tr className="bg-orange-50 cursor-pointer">
+              <td colSpan={years.length + 1} className="px-2 py-1 sticky left-0 bg-orange-50">
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold text-orange-800 text-xs">
+                    税金（自動計算）
+                  </span>
+                </div>
+              </td>
+            </tr>
+
+            {/* 税引き前利益 */}
+            <tr className="bg-orange-100">
+              <td className="px-2 py-1 text-xs text-gray-900 sticky left-0 bg-orange-100">
+                <div className="flex items-center">
+                  <span className="w-1.5 h-1.5 rounded-full mr-1 bg-orange-500"></span>
+                  税引き前利益（万円）
+                </div>
+              </td>
+              {years.map(year => (
+                <td key={year} className="px-2 py-1 text-right text-xs font-semibold text-orange-800">
+                  {cashFlow[year]?.corporatePretaxProfit || 0}
+                </td>
+              ))}
+            </tr>
+
+            {/* 法人税 */}
+            <tr>
+              <td className="px-2 py-1 text-xs text-gray-900 sticky left-0 bg-white">
+                <div className="flex items-center">
+                  <span className="w-1.5 h-1.5 rounded-full mr-1 bg-red-500"></span>
+                  法人税（万円）
+                </div>
+              </td>
+              {years.map(year => (
+                <td key={year} className="px-2 py-1 text-right text-xs text-red-600">
+                  -{cashFlow[year]?.corporateTax || 0}
+                </td>
+              ))}
+            </tr>
+
+            {/* 地方法人税 */}
+            <tr>
+              <td className="px-2 py-1 text-xs text-gray-900 sticky left-0 bg-white">
+                <div className="flex items-center">
+                  <span className="w-1.5 h-1.5 rounded-full mr-1 bg-red-500"></span>
+                  地方法人税（万円）
+                </div>
+              </td>
+              {years.map(year => (
+                <td key={year} className="px-2 py-1 text-right text-xs text-red-600">
+                  -{cashFlow[year]?.localCorporateTax || 0}
+                </td>
+              ))}
+            </tr>
+
+            {/* 法人住民税（均等割） */}
+            <tr>
+              <td className="px-2 py-1 text-xs text-gray-900 sticky left-0 bg-white">
+                <div className="flex items-center">
+                  <span className="w-1.5 h-1.5 rounded-full mr-1 bg-red-500"></span>
+                  法人住民税（均等割）（万円）
+                </div>
+              </td>
+              {years.map(year => (
+                <td key={year} className="px-2 py-1 text-right text-xs text-red-600">
+                  -{cashFlow[year]?.residentTaxEqual || 0}
+                </td>
+              ))}
+            </tr>
+
+            {/* 法人住民税（法人税割） */}
+            <tr>
+              <td className="px-2 py-1 text-xs text-gray-900 sticky left-0 bg-white">
+                <div className="flex items-center">
+                  <span className="w-1.5 h-1.5 rounded-full mr-1 bg-red-500"></span>
+                  法人住民税（法人税割）（万円）
+                </div>
+              </td>
+              {years.map(year => (
+                <td key={year} className="px-2 py-1 text-right text-xs text-red-600">
+                  -{cashFlow[year]?.residentTaxProportional || 0}
+                </td>
+              ))}
+            </tr>
+
+            {/* 税金合計 */}
+            <tr className="bg-red-100">
+              <td className="px-2 py-1 text-xs text-gray-900 sticky left-0 bg-red-100">
+                <div className="flex items-center">
+                  <span className="w-1.5 h-1.5 rounded-full mr-1 bg-red-600"></span>
+                  税金合計（万円）
+                </div>
+              </td>
+              {years.map(year => (
+                <td key={year} className="px-2 py-1 text-right text-xs font-bold text-red-700">
+                  -{cashFlow[year]?.corporateTotalTax || 0}
+                </td>
+              ))}
+            </tr>
+
+            {/* 税引き後利益 */}
+            <tr className="bg-green-100">
+              <td className="px-2 py-1 text-xs text-gray-900 sticky left-0 bg-green-100">
+                <div className="flex items-center">
+                  <span className="w-1.5 h-1.5 rounded-full mr-1 bg-green-600"></span>
+                  税引き後利益（万円）
+                </div>
+              </td>
+              {years.map(year => {
+                const aftertaxProfit = cashFlow[year]?.corporateAftertaxProfit || 0;
+                return (
+                  <td key={year} className={`px-2 py-1 text-right text-xs font-bold ${aftertaxProfit >= 0 ? 'text-green-700' : 'text-red-700'}`}>
+                    {aftertaxProfit}
+                  </td>
+                );
+              })}
+            </tr>
+
+            {/* 実効税率 */}
+            <tr className="bg-gray-100">
+              <td className="px-2 py-1 text-xs text-gray-900 sticky left-0 bg-gray-100">
+                <div className="flex items-center">
+                  <span className="w-1.5 h-1.5 rounded-full mr-1 bg-gray-500"></span>
+                  実効税率（%）
+                </div>
+              </td>
+              {years.map(year => {
+                const effectiveRate = cashFlow[year]?.corporateEffectiveTaxRate || 0;
+                return (
+                  <td key={year} className="px-2 py-1 text-right text-xs text-gray-600">
+                    {isNaN(effectiveRate) || !isFinite(effectiveRate) ? '0.0%' : `${effectiveRate}%`}
+                  </td>
+                );
+              })}
+            </tr>
             
             {/* 法人資産セクション */}
             <tr className="bg-blue-50 cursor-pointer" onClick={() => toggleSection('corporateAsset')}>
@@ -1487,19 +1812,6 @@ const renderCorporateTable = () => {
 {/* 法人合計値 */}
 <tr className="bg-gray-50 font-medium">
   <td className="px-2 py-1 text-xs text-gray-900 sticky left-0 bg-gray-50">
-    収支
-    </td>
-  {years.map(year => {
-    const balance = cashFlow[year]?.corporateBalance || 0;
-    return (
-      <td key={year} className={`px-2 py-1 text-right text-xs ${balance >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-        {balance}万円
-      </td>
-    );
-  })}
-</tr>
-<tr className="bg-gray-50 font-medium">
-  <td className="px-2 py-1 text-xs text-gray-900 sticky left-0 bg-gray-50">
     投資額
     <TermTooltip term="" width="narrow" icon={false}>
       その年に投資に回した金額
@@ -1624,6 +1936,14 @@ const renderCorporateTable = () => {
           次へ
         </button>
       </div>
+
+      {/* **新機能**: 法人税設定モーダル */}
+      <CorporateTaxSettingsModal
+        isOpen={isTaxSettingsModalOpen}
+        onClose={() => setIsTaxSettingsModalOpen(false)}
+        settings={parameters.corporateTaxSettings}
+        onSave={updateCorporateTaxSettings}
+      />
 
       {/* コンテキストヘルプコンポーネントを追加 */}
       <ContextHelp 

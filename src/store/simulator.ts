@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { calculateNetIncome, calculateHousingExpense } from '@/lib/calculations';
+import { calculateNetIncome, calculateHousingExpense, calculateCorporateTax, CorporateTaxSettings, DEFAULT_CORPORATE_TAX_SETTINGS } from '@/lib/calculations';
 import { 
   calculatePensionForYear, 
   calculateSpousePensionForYear 
@@ -167,7 +167,7 @@ export interface BasicInfo {
   willWorkAfterPension?: boolean;
 }
 
-// **修正**: Parameters インターフェースに incomeInvestmentReturn を追加
+// **修正**: Parameters インターフェースに incomeInvestmentReturn と法人税設定を追加
 export interface Parameters {
   inflationRate: number;
   educationCostIncreaseRate: number;
@@ -175,6 +175,8 @@ export interface Parameters {
   investmentRatio?: number;
   maxInvestmentAmount?: number;
   incomeInvestmentReturn: number; // **追加**: 収入からの投資運用利回り
+  // **新機能**: 法人税設定
+  corporateTaxSettings: CorporateTaxSettings;
 }
 
 export interface CashFlowData {
@@ -209,6 +211,15 @@ export interface CashFlowData {
     corporateInvestmentAmount: number;
     corporateInvestmentIncome: number;
     corporateTotalInvestmentAssets: number;
+    // **新機能**: 法人税関連
+    corporatePretaxProfit: number;        // 税引き前利益
+    corporateTax: number;                 // 法人税
+    localCorporateTax: number;            // 地方法人税
+    residentTaxEqual: number;             // 法人住民税（均等割）
+    residentTaxProportional: number;      // 法人住民税（法人税割）
+    corporateTotalTax: number;            // 税金合計
+    corporateAftertaxProfit: number;      // 税引き後利益
+    corporateEffectiveTaxRate: number;    // 実効税率
   };
 }
 
@@ -261,6 +272,9 @@ interface SimulatorState {
   // History actions
   addHistoryEntry: (entry: Omit<HistoryEntry, 'timestamp'>) => void;
   clearHistory: () => void;
+
+  // **新機能**: 法人税設定関連のアクション
+  updateCorporateTaxSettings: (settings: Partial<CorporateTaxSettings>) => void;
 }
 
 // 教育費計算関数（元のファイルから抽出）
@@ -390,7 +404,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
     pensionStartAge: 65,
     willWorkAfterPension: false,
   },
-  // **修正**: parameters に incomeInvestmentReturn を追加
+  // **修正**: parameters に incomeInvestmentReturn と法人税設定を追加
   parameters: {
     inflationRate: 0,
     educationCostIncreaseRate: 0,
@@ -398,6 +412,8 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
     investmentRatio: 0,
     maxInvestmentAmount: 0,
     incomeInvestmentReturn: 0, // **追加**: 収入からの投資運用利回り
+    // **新機能**: デフォルトの法人税設定
+    corporateTaxSettings: DEFAULT_CORPORATE_TAX_SETTINGS,
   },
   cashFlow: {},
   history: [],
@@ -519,7 +535,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
     get().initializeCashFlow();
   },
 
-  // **完全修正版: syncCashFlowFromFormData - 年金計算機能付き + 資産反映修正 + 法人原価計算追加**
+  // **完全修正版: syncCashFlowFromFormData - 年金計算機能付き + 資産反映修正 + 法人原価計算追加 + 法人税計算追加**
   syncCashFlowFromFormData: () => {
     try {
       const state = get();
@@ -921,20 +937,28 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
           corporateLiabilityTotal += Math.abs(liability.amounts[year] || 0);
         });
 
-        // === 8. **資産修正5**: 収支とバランス計算（資産ページの資産を考慮） ===
+        // === 8. **法人税計算（新機能）** ===
+        
+        // 法人の税引き前利益を計算
+        const corporateTotalIncome = corporateIncome + corporateOtherIncome + corporateInvestmentIncome + corporateLifeEventIncome;
+        const corporateTotalExpense = corporateExpense + corporateOtherExpense + corporateCost + corporateInvestmentAmount + 
+          corporateLifeEventExpense + corporateLoanRepayment;
+        const corporatePretaxProfit = corporateTotalIncome - corporateTotalExpense;
+
+        // 法人税の計算
+        const taxResult = calculateCorporateTax(corporatePretaxProfit, parameters.corporateTaxSettings);
+
+        // === 9. **資産修正5**: 収支とバランス計算（資産ページの資産を考慮） ===
         const personalTotalIncome = mainIncome + sideIncome + otherSideIncome + spouseIncome + 
           pensionIncome + spousePensionIncome + personalInvestmentIncome + personalLifeEventIncome;
         const personalTotalExpense = livingExpense + housingExpense + educationExpense + 
           otherPersonalExpense + personalInvestmentAmount + personalLifeEventExpense + personalLoanRepayment;
         const personalBalance = personalTotalIncome - personalTotalExpense;
 
-        // 法人支出に原価を含める
-        const corporateTotalIncome = corporateIncome + corporateOtherIncome + corporateInvestmentIncome + corporateLifeEventIncome;
-        const corporateTotalExpense = corporateExpense + corporateOtherExpense + corporateCost + corporateInvestmentAmount + 
-          corporateLifeEventExpense + corporateLoanRepayment;
-        const corporateBalance = corporateTotalIncome - corporateTotalExpense;
+        // **修正**: 法人収支から税金を差し引く
+        const corporateBalance = taxResult.aftertaxProfit;
 
-        // === 9. **資産修正6**: 資産更新（資産ページの資産も含めて総資産を計算） ===
+        // === 10. **資産修正6**: 資産更新（資産ページの資産も含めて総資産を計算） ===
         personalTotalAssets += personalBalance;
         corporateTotalAssets += corporateBalance;
 
@@ -983,7 +1007,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
         const personalNetAssets = personalTotalAssets - personalLiabilityTotal;
         const corporateNetAssets = corporateTotalAssets - corporateLiabilityTotal;
 
-        // === 10. キャッシュフローデータ保存 ===
+        // === 11. キャッシュフローデータ保存（法人税情報追加） ===
         newCashFlow[year] = {
           mainIncome: Math.round(mainIncome * 10) / 10,
           sideIncome: Math.round((sideIncome + otherSideIncome) * 10) / 10,
@@ -1014,7 +1038,16 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
           corporateNetAssets: Math.round(corporateNetAssets * 10) / 10,
           corporateInvestmentAmount: Math.round(corporateInvestmentAmount * 10) / 10,
           corporateInvestmentIncome: Math.round(corporateInvestmentIncome * 10) / 10,
-          corporateTotalInvestmentAssets: Math.round(currentCorporateInvestmentAssets * 10) / 10
+          corporateTotalInvestmentAssets: Math.round(currentCorporateInvestmentAssets * 10) / 10,
+          // **新機能**: 法人税関連データ
+          corporatePretaxProfit: taxResult.pretaxProfit,
+          corporateTax: taxResult.corporateTax,
+          localCorporateTax: taxResult.localCorporateTax,
+          residentTaxEqual: taxResult.residentTaxEqual,
+          residentTaxProportional: taxResult.residentTaxProportional,
+          corporateTotalTax: taxResult.totalTax,
+          corporateAftertaxProfit: taxResult.aftertaxProfit,
+          corporateEffectiveTaxRate: taxResult.effectiveTaxRate,
         };
       });
 
@@ -1076,6 +1109,21 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
   
   clearHistory: () => set({ history: [] }),
 
+  // **新機能**: 法人税設定の更新
+  updateCorporateTaxSettings: (settings) => {
+    set((state) => ({
+      parameters: {
+        ...state.parameters,
+        corporateTaxSettings: {
+          ...state.parameters.corporateTaxSettings,
+          ...settings,
+        },
+      },
+    }));
+    // 法人税設定変更時にキャッシュフローを再計算
+    get().initializeCashFlow();
+  },
+
   // LocalStorage
   saveToLocalStorage: () => {
     const state = get();
@@ -1102,7 +1150,11 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
         const data = JSON.parse(savedState);
         set({
           basicInfo: data.basicInfo,
-          parameters: data.parameters,
+          parameters: {
+            ...data.parameters,
+            // 法人税設定がない場合はデフォルト値を設定
+            corporateTaxSettings: data.parameters?.corporateTaxSettings || DEFAULT_CORPORATE_TAX_SETTINGS,
+          },
           incomeData: data.incomeData,
           expenseData: data.expenseData,
           assetData: data.assetData,

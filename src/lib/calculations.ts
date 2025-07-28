@@ -44,12 +44,12 @@ export function calculateSocialInsuranceRate(annualIncome: number): number {
 
 // 法人税設定の型定義
 export interface CorporateTaxSettings {
-  corporateTaxRateLow: number;      // 800万円以下の税率（デフォルト：15%）
-  corporateTaxRateHigh: number;     // 800万円超の税率（デフォルト：23.2%）
-  corporateTaxThreshold: number;    // 閾値（デフォルト：800万円）
-  localCorporateTaxRate: number;    // 地方法人税率（デフォルト：10.3%）
-  residentTaxPrefectureRate: number; // 法人住民税（都道府県）（デフォルト：1.0%）
-  residentTaxMunicipalityRate: number; // 法人住民税（市町村）（デフォルト：6.0%）
+  corporateTaxRateLow: number;           // 800万円以下の税率（デフォルト：15%）
+  corporateTaxRateHigh: number;          // 800万円超の税率（デフォルト：23.2%）
+  corporateTaxThreshold: number;         // 閾値（デフォルト：800万円）
+  localCorporateTaxRate: number;         // 地方法人税率（デフォルト：10.3%）
+  residentTaxEqualRate: number;          // 法人住民税（均等割）（デフォルト：7万円）
+  residentTaxProportionalRate: number;   // 法人住民税（法人税割）（デフォルト：7.0%）
 }
 
 // デフォルトの法人税設定
@@ -58,20 +58,20 @@ export const DEFAULT_CORPORATE_TAX_SETTINGS: CorporateTaxSettings = {
   corporateTaxRateHigh: 23.2,       // 23.2%
   corporateTaxThreshold: 800,       // 800万円
   localCorporateTaxRate: 10.3,      // 10.3%
-  residentTaxPrefectureRate: 1.0,   // 1.0%
-  residentTaxMunicipalityRate: 6.0, // 6.0%
+  residentTaxEqualRate: 7,          // 7万円（均等割）
+  residentTaxProportionalRate: 7.0, // 7.0%（法人税割）
 };
 
 // 法人税の計算結果
 export interface CorporateTaxResult {
-  pretaxProfit: number;           // 税引き前利益
-  corporateTax: number;           // 法人税
-  localCorporateTax: number;      // 地方法人税
-  residentTaxPrefecture: number;  // 法人住民税（都道府県）
-  residentTaxMunicipality: number; // 法人住民税（市町村）
-  totalTax: number;               // 税金合計
-  aftertaxProfit: number;         // 税引き後利益
-  effectiveTaxRate: number;       // 実効税率（%）
+  pretaxProfit: number;                 // 税引き前利益
+  corporateTax: number;                 // 法人税
+  localCorporateTax: number;            // 地方法人税
+  residentTaxEqual: number;             // 法人住民税（均等割）
+  residentTaxProportional: number;      // 法人住民税（法人税割）
+  totalTax: number;                     // 税金合計
+  aftertaxProfit: number;               // 税引き後利益
+  effectiveTaxRate: number;             // 実効税率（%）
 }
 
 // 法人税の計算
@@ -79,17 +79,23 @@ export function calculateCorporateTax(
   pretaxProfit: number, // 税引き前利益（万円）
   settings: CorporateTaxSettings = DEFAULT_CORPORATE_TAX_SETTINGS
 ): CorporateTaxResult {
-  // 利益が0以下の場合は税金なし
+  // 法人住民税（均等割）は利益に関係なく発生
+  const residentTaxEqual = settings.residentTaxEqualRate;
+
+  // 利益が0以下の場合は均等割のみ
   if (pretaxProfit <= 0) {
+    // 実効税率の計算：税引き前利益が0の場合は0%、マイナスの場合も0%として扱う
+    const effectiveTaxRate = 0;
+    
     return {
       pretaxProfit,
       corporateTax: 0,
       localCorporateTax: 0,
-      residentTaxPrefecture: 0,
-      residentTaxMunicipality: 0,
-      totalTax: 0,
-      aftertaxProfit: pretaxProfit,
-      effectiveTaxRate: 0,
+      residentTaxEqual,
+      residentTaxProportional: 0,
+      totalTax: residentTaxEqual,
+      aftertaxProfit: pretaxProfit - residentTaxEqual,
+      effectiveTaxRate,
     };
   }
 
@@ -109,17 +115,16 @@ export function calculateCorporateTax(
   // 地方法人税の計算（法人税額の10.3%）
   const localCorporateTax = corporateTax * (settings.localCorporateTaxRate / 100);
 
-  // 法人住民税の計算（法人税額に対する比例税率）
-  const residentTaxPrefecture = corporateTax * (settings.residentTaxPrefectureRate / 100);
-  const residentTaxMunicipality = corporateTax * (settings.residentTaxMunicipalityRate / 100);
+  // 法人住民税（法人税割）の計算（法人税額に対する比例税率）
+  const residentTaxProportional = corporateTax * (settings.residentTaxProportionalRate / 100);
 
   // 税金合計
-  const totalTax = corporateTax + localCorporateTax + residentTaxPrefecture + residentTaxMunicipality;
+  const totalTax = corporateTax + localCorporateTax + residentTaxEqual + residentTaxProportional;
 
   // 税引き後利益
   const aftertaxProfit = pretaxProfit - totalTax;
 
-  // 実効税率
+  // 実効税率（税引き前利益が0の場合は0%として扱う）
   const effectiveTaxRate = pretaxProfit > 0 ? (totalTax / pretaxProfit) * 100 : 0;
 
   // 小数点第1位で四捨五入
@@ -127,8 +132,8 @@ export function calculateCorporateTax(
     pretaxProfit: Math.round(pretaxProfit * 10) / 10,
     corporateTax: Math.round(corporateTax * 10) / 10,
     localCorporateTax: Math.round(localCorporateTax * 10) / 10,
-    residentTaxPrefecture: Math.round(residentTaxPrefecture * 10) / 10,
-    residentTaxMunicipality: Math.round(residentTaxMunicipality * 10) / 10,
+    residentTaxEqual: Math.round(residentTaxEqual * 10) / 10,
+    residentTaxProportional: Math.round(residentTaxProportional * 10) / 10,
     totalTax: Math.round(totalTax * 10) / 10,
     aftertaxProfit: Math.round(aftertaxProfit * 10) / 10,
     effectiveTaxRate: Math.round(effectiveTaxRate * 100) / 100,

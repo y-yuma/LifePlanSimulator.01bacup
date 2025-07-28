@@ -40,6 +40,101 @@ export function calculateSocialInsuranceRate(annualIncome: number): number {
   return annualIncome < 850 ? 0.15 : 0.077;
 }
 
+// === 法人税計算関数（新機能） ===
+
+// 法人税設定の型定義
+export interface CorporateTaxSettings {
+  corporateTaxRateLow: number;      // 800万円以下の税率（デフォルト：15%）
+  corporateTaxRateHigh: number;     // 800万円超の税率（デフォルト：23.2%）
+  corporateTaxThreshold: number;    // 閾値（デフォルト：800万円）
+  localCorporateTaxRate: number;    // 地方法人税率（デフォルト：10.3%）
+  residentTaxPrefectureRate: number; // 法人住民税（都道府県）（デフォルト：1.0%）
+  residentTaxMunicipalityRate: number; // 法人住民税（市町村）（デフォルト：6.0%）
+}
+
+// デフォルトの法人税設定
+export const DEFAULT_CORPORATE_TAX_SETTINGS: CorporateTaxSettings = {
+  corporateTaxRateLow: 15.0,        // 15%
+  corporateTaxRateHigh: 23.2,       // 23.2%
+  corporateTaxThreshold: 800,       // 800万円
+  localCorporateTaxRate: 10.3,      // 10.3%
+  residentTaxPrefectureRate: 1.0,   // 1.0%
+  residentTaxMunicipalityRate: 6.0, // 6.0%
+};
+
+// 法人税の計算結果
+export interface CorporateTaxResult {
+  pretaxProfit: number;           // 税引き前利益
+  corporateTax: number;           // 法人税
+  localCorporateTax: number;      // 地方法人税
+  residentTaxPrefecture: number;  // 法人住民税（都道府県）
+  residentTaxMunicipality: number; // 法人住民税（市町村）
+  totalTax: number;               // 税金合計
+  aftertaxProfit: number;         // 税引き後利益
+  effectiveTaxRate: number;       // 実効税率（%）
+}
+
+// 法人税の計算
+export function calculateCorporateTax(
+  pretaxProfit: number, // 税引き前利益（万円）
+  settings: CorporateTaxSettings = DEFAULT_CORPORATE_TAX_SETTINGS
+): CorporateTaxResult {
+  // 利益が0以下の場合は税金なし
+  if (pretaxProfit <= 0) {
+    return {
+      pretaxProfit,
+      corporateTax: 0,
+      localCorporateTax: 0,
+      residentTaxPrefecture: 0,
+      residentTaxMunicipality: 0,
+      totalTax: 0,
+      aftertaxProfit: pretaxProfit,
+      effectiveTaxRate: 0,
+    };
+  }
+
+  // 法人税の計算（累進税率）
+  let corporateTax = 0;
+  
+  if (pretaxProfit <= settings.corporateTaxThreshold) {
+    // 閾値以下：軽減税率を適用
+    corporateTax = pretaxProfit * (settings.corporateTaxRateLow / 100);
+  } else {
+    // 閾値超過：累進計算
+    corporateTax = 
+      settings.corporateTaxThreshold * (settings.corporateTaxRateLow / 100) +
+      (pretaxProfit - settings.corporateTaxThreshold) * (settings.corporateTaxRateHigh / 100);
+  }
+
+  // 地方法人税の計算（法人税額の10.3%）
+  const localCorporateTax = corporateTax * (settings.localCorporateTaxRate / 100);
+
+  // 法人住民税の計算（法人税額に対する比例税率）
+  const residentTaxPrefecture = corporateTax * (settings.residentTaxPrefectureRate / 100);
+  const residentTaxMunicipality = corporateTax * (settings.residentTaxMunicipalityRate / 100);
+
+  // 税金合計
+  const totalTax = corporateTax + localCorporateTax + residentTaxPrefecture + residentTaxMunicipality;
+
+  // 税引き後利益
+  const aftertaxProfit = pretaxProfit - totalTax;
+
+  // 実効税率
+  const effectiveTaxRate = pretaxProfit > 0 ? (totalTax / pretaxProfit) * 100 : 0;
+
+  // 小数点第1位で四捨五入
+  return {
+    pretaxProfit: Math.round(pretaxProfit * 10) / 10,
+    corporateTax: Math.round(corporateTax * 10) / 10,
+    localCorporateTax: Math.round(localCorporateTax * 10) / 10,
+    residentTaxPrefecture: Math.round(residentTaxPrefecture * 10) / 10,
+    residentTaxMunicipality: Math.round(residentTaxMunicipality * 10) / 10,
+    totalTax: Math.round(totalTax * 10) / 10,
+    aftertaxProfit: Math.round(aftertaxProfit * 10) / 10,
+    effectiveTaxRate: Math.round(effectiveTaxRate * 100) / 100,
+  };
+}
+
 // Housing cost calculation utilities
 export function calculateMonthlyMortgage(
   loanAmount: number,

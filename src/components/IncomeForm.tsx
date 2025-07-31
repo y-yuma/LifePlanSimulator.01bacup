@@ -221,8 +221,8 @@ export function IncomeForm() {
         type: 'income',
         category: 'income',
         amounts: {},
-        investmentRatio: 5,
-        maxInvestmentAmount: 50,
+        investmentRatio: 0,
+        maxInvestmentAmount: 0,
         isAutoCalculated: true
       });
       needsUpdate = true;
@@ -236,8 +236,8 @@ export function IncomeForm() {
         type: 'income',
         category: 'income',
         amounts: {},
-        investmentRatio: 5,
-        maxInvestmentAmount: 50,
+        investmentRatio: 0,
+        maxInvestmentAmount: 0,
         isAutoCalculated: true
       });
       needsUpdate = true;
@@ -253,8 +253,8 @@ export function IncomeForm() {
         type: 'income',
         category: 'income',
         amounts: {},
-        investmentRatio: 10,
-        maxInvestmentAmount: 100
+        investmentRatio: 0,
+        maxInvestmentAmount: 0
       });
       needsUpdate = true;
     }
@@ -292,8 +292,6 @@ export function IncomeForm() {
         <li><span className="font-bold">事業収入</span>: 自営業者やフリーランスが得る事業による収入</li>
         <li><span className="font-bold">副業収入</span>: 本業以外から得られる収入</li>
         <li><span className="font-bold">年金収入</span>: 国民年金や厚生年金からの給付金</li>
-        <li><span className="font-bold">投資割合</span>: 収入のうち、何%を投資に回すかの割合</li>
-        <li><span className="font-bold">最大投資額</span>: 年間に投資できる金額の上限(万円)</li>
         <li><span className="font-bold">収入上限値</span>: 自動入力時に設定する年間収入の最大値(万円)</li>
       </ul>
       
@@ -377,17 +375,6 @@ export function IncomeForm() {
 1年目: 400万円
 2年目: min(400 + 10, 1000) = min(410, 1000) = 410万円
 3年目: min(400 + 10 × 2, 1000) = min(420, 1000) = 420万円`} />
-      </FormulaAccordion>
-
-      <FormulaAccordion 
-        title="資産運用計算式" 
-        bgColor="bg-blue-50" 
-        textColor="text-blue-800" 
-        borderColor="border-blue-200"
-      >
-        <FormulaSyntax formula={`投資額 = min(収入額 × (投資割合/100), 最大投資額)
-投資収益 = 前年の運用資産 × (運用利回り/100)
-当年の運用資産 = 前年の運用資産 + 当年の総投資額 + 当年の投資収益`} />
       </FormulaAccordion>
     </div>
   );
@@ -569,28 +556,6 @@ export function IncomeForm() {
     syncCashFlowFromFormData();
   };
 
-  // 投資割合を変更
-  const handleInvestmentPercentageChange = (section: 'personal' | 'corporate', id: string, value: number) => {
-    setIncomeData({
-      ...incomeData,
-      [section]: incomeData[section].map(item =>
-        item.id === id ? { ...item, investmentRatio: value } : item
-      ),
-    });
-    syncCashFlowFromFormData();
-  };
-
-  // 最大投資額を変更
-  const handleMaxInvestmentAmountChange = (section: 'personal' | 'corporate', id: string, value: number) => {
-    setIncomeData({
-      ...incomeData,
-      [section]: incomeData[section].map(item =>
-        item.id === id ? { ...item, maxInvestmentAmount: value } : item
-      ),
-    });
-    syncCashFlowFromFormData();
-  };
-
   const handleCategoryChange = (section: 'personal' | 'corporate', id: string, value: string) => {
     setIncomeData({
       ...incomeData,
@@ -633,22 +598,6 @@ export function IncomeForm() {
                 <th className="px-4 py-2 text-center text-sm font-medium text-gray-500 w-[100px] min-w-[100px]">
                   カテゴリ
                 </th>
-                <th className="px-4 py-2 text-center text-sm font-medium text-gray-500 w-[70px] min-w-[70px]">
-                  <div className="flex items-center justify-center">
-                    <span>投資割合(%)</span>
-                    <TermTooltip term="" width="narrow">
-                      収入のうち、何%を投資に回すかの割合です。この割合に基づいて自動的に投資が行われます。
-                    </TermTooltip>
-                  </div>
-                </th>
-                <th className="px-4 py-2 text-center text-sm font-medium text-gray-500 w-[90px] min-w-[90px]">
-                  <div className="flex items-center justify-center">
-                    <span>最大投資額</span>
-                    <TermTooltip term="" width="narrow">
-                      年間に投資できる金額の上限(万円)です。投資割合に基づく金額がこの値を超える場合、この上限が適用されます。
-                    </TermTooltip>
-                  </div>
-                </th>
                 {/* 自動入力ボタン列 */}
                 <th className="px-4 py-2 text-center text-sm font-medium text-gray-500 w-[80px] min-w-[80px]">
                   <div className="flex items-center justify-center">
@@ -686,27 +635,6 @@ export function IncomeForm() {
                       value={item.category || 'other'}
                       onChange={(value) => handleCategoryChange(section, item.id, value)}
                       categories={INCOME_CATEGORIES}
-                    />
-                  </td>
-                  <td className="px-4 py-2">
-                    <input
-                      type="number"
-                      min="0"
-                      max="100"
-                      value={item.investmentRatio || 0}
-                      onChange={(e) => handleInvestmentPercentageChange(section, item.id, Number(e.target.value))}
-                      className="w-full text-right rounded-md border border-gray-200 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                      placeholder="0"
-                    />
-                  </td>
-                  <td className="px-4 py-2">
-                    <input
-                      type="number"
-                      min="0"
-                      value={item.maxInvestmentAmount || 0}
-                      onChange={(e) => handleMaxInvestmentAmountChange(section, item.id, Number(e.target.value))}
-                      className="w-full text-right rounded-md border border-gray-200 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                      placeholder="0"
                     />
                   </td>
                   {/* 自動入力ボタン列 */}
@@ -771,9 +699,9 @@ export function IncomeForm() {
       <div className="bg-blue-50 p-4 rounded-md">
         <h3 className="text-md font-medium text-blue-800 mb-2">収入情報について</h3>
         <p className="text-sm text-blue-700">
-          収入を個人・法人別に入力します。投資割合と最大投資額を設定すると、各収入から自動的に投資が行われます。
-          給与収入の場合、手取り計算が適用され、実際の可処分所得が表示されます。
+          収入を個人・法人別に入力します。給与収入の場合、手取り計算が適用され、実際の可処分所得が表示されます。
           年金収入は、基本情報で設定した職業・年金受給開始年齢などに基づいて自動計算されます。
+          投資設定は資産ページの「収入投資」で行えます。
         </p>
       </div>
 
@@ -819,49 +747,16 @@ export function IncomeForm() {
           <li>在職老齢年金制度による調整（年金受給中の就労収入がある場合）</li>
         </ul>
       </div>
-
-      {/* 基本設定セクション（収入からの投資運用利回りを追加） */}
-      <div className="bg-sky-50 p-4 rounded-md">
-        <h3 className="text-md font-medium text-sky-800 mb-4">基本設定</h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="space-y-2">
-            <label className="text-sm font-medium text-sky-700">
-              収入からの投資運用利回り(%)
-              <TermTooltip term="" width="wide">
-                収入から投資に回した資産の年間運用利回りです。0%〜100%の範囲で設定できます。
-              </TermTooltip>
-            </label>
-            <input
-              type="number"
-              min="0"
-              max="100"
-              step="0.1"
-              value={parameters.incomeInvestmentReturn || 0}
-              onChange={(e) => setParameters({ incomeInvestmentReturn: Number(e.target.value) })}
-              className="w-full rounded-md border border-sky-200 px-3 py-2 text-sm focus:ring-2 focus:ring-sky-500 focus:border-transparent"
-              placeholder="5.0"
-            />
-          </div>
-        </div>
-      </div>
-
       
       {renderIncomeTable('personal')}
       {renderIncomeTable('corporate')}
 
       <div className="bg-yellow-50 p-4 rounded-md">
-        <h3 className="text-md font-medium text-yellow-800 mb-2">投資の仕組み</h3>
+        <h3 className="text-md font-medium text-yellow-800 mb-2">収入からの投資について</h3>
         <p className="text-sm text-yellow-700 mb-2">
-          各収入項目で設定した投資割合に基づいて、自動的に投資が行われます。投資額は以下の式で計算されます：
+          収入の一部を投資に回したい場合は、資産ページで「収入投資」を追加してください。
+          収入投資では、選択した収入項目から自動的に一定割合を投資に回し、設定した運用利回りで複利運用できます。
         </p>
-        <div className="text-sm text-yellow-700">
-          <p className="font-medium">投資額の計算式：</p>
-          <ul className="list-disc pl-4 space-y-1">
-            <li>投資額 = min(収入額 × (投資割合/100), 最大投資額)</li>
-            <li>投資割合が0%の場合、新規投資は行われません</li>
-            <li>投資された資産は、設定した運用利回りで複利運用されます</li>
-          </ul>
-        </div>
       </div>
 
       <div className="flex justify-between">

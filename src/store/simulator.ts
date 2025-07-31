@@ -17,7 +17,7 @@ export interface IncomeItem {
   _originalAmounts?: { [year: number]: number };
   // 手取り額を保存
   _netAmounts?: { [year: number]: number };
-  // 投資関連プロパティ
+  // 投資関連プロパティ（収入投資への移行により削除予定）
   investmentRatio: number; 
   maxInvestmentAmount: number;
   // 自動計算フラグ
@@ -51,15 +51,21 @@ export interface ExpenseSection {
   corporate: ExpenseItem[];
 }
 
-// Asset types - **修正**: investmentReturn プロパティを追加
+// Asset types - **修正**: 収入投資用のプロパティを追加
 export interface AssetItem {
   id: string;
   name: string;
-  type: 'cash' | 'investment' | 'property' | 'other';
+  type: 'cash' | 'investment' | 'property' | 'income_investment' | 'other';
   category?: string;
   amounts: { [year: number]: number };
   isInvestment?: boolean;
-  investmentReturn?: number; // **追加**: 個別運用利回り
+  investmentReturn?: number;
+  // 収入投資用のフィールド
+  isIncomeInvestment?: boolean;
+  linkedIncomeId?: string;
+  linkedIncomeType?: 'personal' | 'corporate';
+  investmentRatio?: number;
+  maxInvestmentAmount?: number;
 }
 
 export interface AssetSection {
@@ -167,14 +173,14 @@ export interface BasicInfo {
   willWorkAfterPension?: boolean;
 }
 
-// **修正**: Parameters インターフェースに incomeInvestmentReturn と法人税設定を追加
+// **修正**: Parameters インターフェースから incomeInvestmentReturn を削除
 export interface Parameters {
   inflationRate: number;
   educationCostIncreaseRate: number;
   investmentReturn: number;
   investmentRatio?: number;
   maxInvestmentAmount?: number;
-  incomeInvestmentReturn: number; // **追加**: 収入からの投資運用利回り
+  // **削除**: incomeInvestmentReturn
   // **新機能**: 法人税設定
   corporateTaxSettings: CorporateTaxSettings;
 }
@@ -404,14 +410,13 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
     pensionStartAge: 65,
     willWorkAfterPension: false,
   },
-  // **修正**: parameters に incomeInvestmentReturn と法人税設定を追加
+  // **修正**: parameters から incomeInvestmentReturn を削除
   parameters: {
     inflationRate: 0,
     educationCostIncreaseRate: 0,
-    investmentReturn: 0, // デフォルト値を5.0に変更
+    investmentReturn: 0,
     investmentRatio: 0,
     maxInvestmentAmount: 0,
-    incomeInvestmentReturn: 0, // **追加**: 収入からの投資運用利回り
     // **新機能**: デフォルトの法人税設定
     corporateTaxSettings: DEFAULT_CORPORATE_TAX_SETTINGS,
   },
@@ -422,16 +427,16 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
   // Initialize form data
   incomeData: {
     personal: [
-      { id: '1', name: '給与収入', type: 'income', category: 'income', amounts: {}, investmentRatio: 10, maxInvestmentAmount: 100 },
-      { id: '2', name: '事業収入', type: 'profit', category: 'income', amounts: {}, investmentRatio: 10, maxInvestmentAmount: 100 },
-      { id: '3', name: '副業収入', type: 'side', category: 'income', amounts: {}, investmentRatio: 10, maxInvestmentAmount: 100 },
-      { id: '4', name: '配偶者収入', type: 'income', category: 'income', amounts: {}, investmentRatio: 10, maxInvestmentAmount: 100 },
+      { id: '1', name: '給与収入', type: 'income', category: 'income', amounts: {}, investmentRatio: 0, maxInvestmentAmount: 0 },
+      { id: '2', name: '事業収入', type: 'profit', category: 'income', amounts: {}, investmentRatio: 0, maxInvestmentAmount: 0 },
+      { id: '3', name: '副業収入', type: 'side', category: 'income', amounts: {}, investmentRatio: 0, maxInvestmentAmount: 0 },
+      { id: '4', name: '配偶者収入', type: 'income', category: 'income', amounts: {}, investmentRatio: 0, maxInvestmentAmount: 0 },
       { id: '5', name: '年金収入', type: 'income', category: 'income', amounts: {}, investmentRatio: 0, maxInvestmentAmount: 0, isAutoCalculated: false },
       { id: '6', name: '配偶者年金収入', type: 'income', category: 'income', amounts: {}, investmentRatio: 0, maxInvestmentAmount: 0, isAutoCalculated: false },
     ],
     corporate: [
-      { id: '101', name: '売上', type: 'income', category: 'income', amounts: {}, investmentRatio: 10, maxInvestmentAmount: 100 },
-      { id: '102', name: 'その他収入', type: 'income', category: 'income', amounts: {}, investmentRatio: 5, maxInvestmentAmount: 50 },
+      { id: '101', name: '売上', type: 'income', category: 'income', amounts: {}, investmentRatio: 0, maxInvestmentAmount: 0 },
+      { id: '102', name: 'その他収入', type: 'income', category: 'income', amounts: {}, investmentRatio: 0, maxInvestmentAmount: 0 },
     ],
   },
   expenseData: {
@@ -535,7 +540,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
     get().initializeCashFlow();
   },
 
-  // **完全修正版: syncCashFlowFromFormData - 年金計算機能付き + 資産反映修正 + 法人原価計算追加 + 法人税計算追加**
+  // **完全修正版: syncCashFlowFromFormData - 収入投資機能対応**
   syncCashFlowFromFormData: () => {
     try {
       const state = get();
@@ -548,7 +553,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
 
       const newCashFlow: CashFlowData = {};
       
-      // **資産修正1**: 資産と負債のデータをディープコピーして作業用として使用
+      // 資産と負債のデータをディープコピーして作業用として使用
       const workingAssetData = JSON.parse(JSON.stringify(assetData));
       const workingLiabilityData = JSON.parse(JSON.stringify(liabilityData));
       
@@ -582,7 +587,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
       let personalTotalAssets = 0;
       let corporateTotalAssets = 0;
 
-      // **資産修正2**: 初期資産の設定（各資産項目の初期値を総資産に加算）
+      // 初期資産の設定（各資産項目の初期値を総資産に加算）
       workingAssetData.personal.forEach((asset: any) => {
         const initialAmount = asset.amounts[basicInfo.startYear] || 0;
         personalTotalAssets += initialAmount;
@@ -599,7 +604,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
         }
       });
 
-      // **年金計算を実行** - ヘルパー関数
+      // 年金計算を実行 - ヘルパー関数
       const findPersonalItem = (name: string) => incomeData.personal.find(i => i.name === name);
       
       // 年金関連項目を取得
@@ -688,57 +693,81 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
           }
         });
 
-        // === 2. 投資額計算（修正版）===
+        // === 2. 収入投資の計算（修正版）===
         let personalInvestmentAmount = 0;
         let corporateInvestmentAmount = 0;
+        let personalInvestmentIncome = 0;  // 運用収益の変数を先に宣言
+        let corporateInvestmentIncome = 0;  // 運用収益の変数を先に宣言
 
-        // 個人の投資額計算
-        incomeData.personal.forEach((income: any) => {
-          const amount = income.amounts[year] || 0;
-          const investmentRatio = income.investmentRatio || 0;
-          const maxInvestmentAmount = income.maxInvestmentAmount || 0;
-          
-          // **修正1: 投資割合が0%の場合は投資額も0**
-          if (investmentRatio > 0 && amount > 0) {
-            const calculatedInvestment = Math.min(
-              amount * (investmentRatio / 100),
-              maxInvestmentAmount
-            );
-            personalInvestmentAmount += calculatedInvestment;
-          }
+        // 収入投資の処理（修正版 - 運用収益をキャッシュフローに加算）
+        ['personal', 'corporate'].forEach((section) => {
+          workingAssetData[section].forEach((asset: any) => {
+            if (asset.type === 'income_investment' && asset.linkedIncomeId) {
+              // 前年の残高を取得（貯金箱の中身を確認）
+              const previousBalance = yearIndex > 0 ? (asset.amounts[year - 1] || 0) : 0;
+              
+              // 運用収益を計算（2年目以降）
+              let assetInvestmentIncome = 0;
+              if (yearIndex > 0 && previousBalance > 0) {
+                const returnRate = asset.investmentReturn || 0;
+                assetInvestmentIncome = previousBalance * (returnRate / 100);
+                
+                // ★運用収益をキャッシュフローに加算★
+                if (section === 'personal') {
+                  personalInvestmentIncome += assetInvestmentIncome;
+                } else {
+                  corporateInvestmentIncome += assetInvestmentIncome;
+                }
+              }
+              
+              // 紐付けられた収入を取得
+              const linkedIncomeType = asset.linkedIncomeType || section;
+              const linkedIncome = incomeData[linkedIncomeType].find(
+                (income: any) => income.id === asset.linkedIncomeId
+              );
+              
+              if (linkedIncome) {
+                const incomeAmount = linkedIncome.amounts[year] || 0;
+                const investmentRatio = asset.investmentRatio || 0;
+                const maxInvestmentAmount = asset.maxInvestmentAmount || Infinity;
+                
+                // 今年の新規投資額を計算
+                const newInvestmentAmount = Math.min(
+                  incomeAmount * (investmentRatio / 100),
+                  maxInvestmentAmount
+                );
+                
+                // 投資額を集計（キャッシュフロー表示用）
+                if (section === 'personal') {
+                  personalInvestmentAmount += newInvestmentAmount;
+                } else {
+                  corporateInvestmentAmount += newInvestmentAmount;
+                }
+                
+                // 累積計算：前年残高 + 運用収益 + 当年新規投資
+                asset.amounts[year] = previousBalance + assetInvestmentIncome + newInvestmentAmount;
+              } else {
+                // 収入が紐付けられていない場合でも、前年残高と運用収益は計算
+                asset.amounts[year] = previousBalance + assetInvestmentIncome;
+              }
+            }
+          });
         });
 
-        // 法人の投資額計算
-        incomeData.corporate.forEach((income: any) => {
-          const amount = income.amounts[year] || 0;
-          const investmentRatio = income.investmentRatio || 0;
-          const maxInvestmentAmount = income.maxInvestmentAmount || 0;
-          
-          // **修正1: 投資割合が0%の場合は投資額も0**
-          if (investmentRatio > 0 && amount > 0) {
-            const calculatedInvestment = Math.min(
-              amount * (investmentRatio / 100),
-              maxInvestmentAmount
-            );
-            corporateInvestmentAmount += calculatedInvestment;
-          }
-        });
-
-        // === 3. **資産修正3**: 運用収益計算（資産ページの資産も含む）===
-        let personalInvestmentIncome = 0;
-        let corporateInvestmentIncome = 0;
+        // === 3. 運用収益計算（資産ページの資産を含む）===
+        // personalInvestmentIncomeとcorporateInvestmentIncomeは既に上で宣言済み
 
         if (yearIndex > 0) { // 初年度は運用収益なし
-          // **資産修正4**: 資産ページの個別運用利回りを適用し、資産額を更新
+          // 資産ページの個別運用利回りを適用し、資産額を更新
           workingAssetData.personal.forEach((asset: any) => {
-            if (asset.isInvestment) {
-              // **修正**: 前年の資産額を取得、前年に資産がない場合は当年から開始
+            if (asset.isInvestment && asset.type !== 'income_investment') {
+              // 収入投資以外の運用資産
+              // 前年の資産額を取得
               let assetAmount = asset.amounts[year - 1] || 0;
               
-              // **重要修正**: 前年に資産がなく、当年に新規で資産が追加された場合の処理
+              // 前年に資産がなく、当年に新規で資産が追加された場合の処理
               if (assetAmount === 0 && asset.amounts[year] && asset.amounts[year] > 0) {
                 // 当年から新規で資産が追加された場合は、当年は運用収益なしで翌年から開始
-                asset.amounts[year] = asset.amounts[year]; // 入力値をそのまま維持
               } else if (assetAmount > 0) {
                 // 前年に資産があった場合、運用収益を計算
                 const investmentReturn = asset.investmentReturn || parameters.investmentReturn || 5.0;
@@ -746,33 +775,29 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
                   const assetInvestmentIncome = assetAmount * (investmentReturn / 100);
                   personalInvestmentIncome += assetInvestmentIncome;
                   
-                  // **重要**: 資産自体の金額を運用収益分増加させる
-                  const currentInputAmount = asset.amounts[year] || 0; // ユーザーの入力値
+                  // 資産自体の金額を運用収益分増加させる
+                  const currentInputAmount = asset.amounts[year] || 0;
                   asset.amounts[year] = assetAmount + assetInvestmentIncome + currentInputAmount;
                 }
-              } else {
-                // 運用されない場合は前年と同額、または当年の入力値
-                if (!asset.amounts[year]) {
-                  asset.amounts[year] = assetAmount;
-                }
               }
-            } else {
+            } else if (!asset.isInvestment && asset.type !== 'income_investment') {
               // 運用資産でない場合は前年と同額（または設定値）
               if (!asset.amounts[year]) {
                 asset.amounts[year] = asset.amounts[year - 1] || 0;
               }
             }
+            // 収入投資の運用収益は既に計算済みなのでスキップ
           });
 
           workingAssetData.corporate.forEach((asset: any) => {
-            if (asset.isInvestment) {
-              // **修正**: 前年の資産額を取得、前年に資産がない場合は当年から開始
+            if (asset.isInvestment && asset.type !== 'income_investment') {
+              // 収入投資以外の運用資産
+              // 前年の資産額を取得
               let assetAmount = asset.amounts[year - 1] || 0;
               
-              // **重要修正**: 前年に資産がなく、当年に新規で資産が追加された場合の処理
+              // 前年に資産がなく、当年に新規で資産が追加された場合の処理
               if (assetAmount === 0 && asset.amounts[year] && asset.amounts[year] > 0) {
                 // 当年から新規で資産が追加された場合は、当年は運用収益なしで翌年から開始
-                asset.amounts[year] = asset.amounts[year]; // 入力値をそのまま維持
               } else if (assetAmount > 0) {
                 // 前年に資産があった場合、運用収益を計算
                 const investmentReturn = asset.investmentReturn || parameters.investmentReturn || 5.0;
@@ -780,45 +805,29 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
                   const assetInvestmentIncome = assetAmount * (investmentReturn / 100);
                   corporateInvestmentIncome += assetInvestmentIncome;
                   
-                  // **重要**: 資産自体の金額を運用収益分増加させる
-                  const currentInputAmount = asset.amounts[year] || 0; // ユーザーの入力値
+                  // 資産自体の金額を運用収益分増加させる
+                  const currentInputAmount = asset.amounts[year] || 0;
                   asset.amounts[year] = assetAmount + assetInvestmentIncome + currentInputAmount;
                 }
-              } else {
-                // 運用されない場合は前年と同額、または当年の入力値
-                if (!asset.amounts[year]) {
-                  asset.amounts[year] = assetAmount;
-                }
               }
-            } else {
+            } else if (!asset.isInvestment && asset.type !== 'income_investment') {
               // 運用資産でない場合は前年と同額（または設定値）
               if (!asset.amounts[year]) {
                 asset.amounts[year] = asset.amounts[year - 1] || 0;
               }
             }
+            // 収入投資の運用収益は既に計算済みなのでスキップ
           });
-
-          // **修正3: 収入からの投資による運用収益を追加**
-          // 前年までに積み立てた投資資産からの収益
-          if (personalInvestmentAssets > 0) {
-            const incomeInvestmentReturn = parameters.incomeInvestmentReturn || 5.0;
-            personalInvestmentIncome += personalInvestmentAssets * (incomeInvestmentReturn / 100);
-          }
-
-          if (corporateInvestmentAssets > 0) {
-            const incomeInvestmentReturn = parameters.incomeInvestmentReturn || 5.0;
-            corporateInvestmentIncome += corporateInvestmentAssets * (incomeInvestmentReturn / 100);
-          }
         } else {
-          // **初年度は資産額をそのまま設定**
+          // 初年度は資産額をそのまま設定（収入投資以外）
           workingAssetData.personal.forEach((asset: any) => {
-            if (!asset.amounts[year]) {
+            if (!asset.amounts[year] && asset.type !== 'income_investment') {
               asset.amounts[year] = asset.amounts[basicInfo.startYear] || 0;
             }
           });
 
           workingAssetData.corporate.forEach((asset: any) => {
-            if (!asset.amounts[year]) {
+            if (!asset.amounts[year] && asset.type !== 'income_investment') {
               asset.amounts[year] = asset.amounts[basicInfo.startYear] || 0;
             }
           });
@@ -937,7 +946,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
           corporateLiabilityTotal += Math.abs(liability.amounts[year] || 0);
         });
 
-        // === 8. **法人税計算（新機能）** ===
+        // === 8. 法人税計算（新機能） ===
         
         // 法人の税引き前利益を計算
         const corporateTotalIncome = corporateIncome + corporateOtherIncome + corporateInvestmentIncome + corporateLifeEventIncome;
@@ -948,21 +957,21 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
         // 法人税の計算
         const taxResult = calculateCorporateTax(corporatePretaxProfit, parameters.corporateTaxSettings);
 
-        // === 9. **資産修正5**: 収支とバランス計算（資産ページの資産を考慮） ===
+        // === 9. 収支とバランス計算（資産ページの資産を考慮） ===
         const personalTotalIncome = mainIncome + sideIncome + otherSideIncome + spouseIncome + 
           pensionIncome + spousePensionIncome + personalInvestmentIncome + personalLifeEventIncome;
         const personalTotalExpense = livingExpense + housingExpense + educationExpense + 
           otherPersonalExpense + personalInvestmentAmount + personalLifeEventExpense + personalLoanRepayment;
         const personalBalance = personalTotalIncome - personalTotalExpense;
 
-        // **修正**: 法人収支から税金を差し引く
+        // 法人収支から税金を差し引く
         const corporateBalance = taxResult.aftertaxProfit;
 
-        // === 10. **資産修正6**: 資産更新（資産ページの資産も含めて総資産を計算） ===
+        // === 10. 資産更新（資産ページの資産も含めて総資産を計算） ===
         personalTotalAssets += personalBalance;
         corporateTotalAssets += corporateBalance;
 
-        // **資産修正7**: 資産ページで設定された資産の現在値を総資産に加算
+        // 資産ページで設定された資産の現在値を総資産に加算
         let currentPersonalAssetPageTotal = 0;
         let currentCorporateAssetPageTotal = 0;
 
@@ -974,7 +983,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
           currentCorporateAssetPageTotal += asset.amounts[year] || 0;
         });
 
-        // **資産修正8**: 総資産に資産ページの資産を反映
+        // 総資産に資産ページの資産を反映
         // 初年度は初期資産がすでに加算されているので、2年目以降は差分を加算
         if (yearIndex > 0) {
           let previousPersonalAssetPageTotal = 0;
@@ -993,15 +1002,9 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
           corporateTotalAssets += (currentCorporateAssetPageTotal - previousCorporateAssetPageTotal);
         }
 
-        // **修正4: 投資資産の正確な更新**
-        const currentPersonalInvestmentAssets = personalInvestmentAssets + personalInvestmentAmount + 
-          personalInvestmentIncome + personalInvestmentLifeEventIncome - personalInvestmentLifeEventExpense;
-        const currentCorporateInvestmentAssets = corporateInvestmentAssets + corporateInvestmentAmount + 
-          corporateInvestmentIncome + corporateInvestmentLifeEventIncome - corporateInvestmentLifeEventExpense;
-
-        // 来年用に更新
-        personalInvestmentAssets = currentPersonalInvestmentAssets;
-        corporateInvestmentAssets = currentCorporateInvestmentAssets;
+        // 投資資産の更新（収入投資分を含む）
+        const currentPersonalInvestmentAssets = currentPersonalAssetPageTotal;
+        const currentCorporateInvestmentAssets = currentCorporateAssetPageTotal;
 
         // 純資産計算
         const personalNetAssets = personalTotalAssets - personalLiabilityTotal;
@@ -1039,7 +1042,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
           corporateInvestmentAmount: Math.round(corporateInvestmentAmount * 10) / 10,
           corporateInvestmentIncome: Math.round(corporateInvestmentIncome * 10) / 10,
           corporateTotalInvestmentAssets: Math.round(currentCorporateInvestmentAssets * 10) / 10,
-          // **新機能**: 法人税関連データ
+          // 法人税関連データ
           corporatePretaxProfit: taxResult.pretaxProfit,
           corporateTax: taxResult.corporateTax,
           localCorporateTax: taxResult.localCorporateTax,
@@ -1109,7 +1112,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
   
   clearHistory: () => set({ history: [] }),
 
-  // **新機能**: 法人税設定の更新
+  // 法人税設定の更新
   updateCorporateTaxSettings: (settings) => {
     set((state) => ({
       parameters: {
@@ -1205,8 +1208,8 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
           type: 'income', 
           category: 'income',
           amounts: {}, 
-          investmentRatio: parameters.investmentRatio || 0,
-          maxInvestmentAmount: parameters.maxInvestmentAmount || 0
+          investmentRatio: 0,
+          maxInvestmentAmount: 0
         },
         { 
           id: '2', 
@@ -1214,8 +1217,8 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
           type: 'profit', 
           category: 'income',
           amounts: {}, 
-          investmentRatio: parameters.investmentRatio || 0,
-          maxInvestmentAmount: parameters.maxInvestmentAmount || 0
+          investmentRatio: 0,
+          maxInvestmentAmount: 0
         },
         { 
           id: '3', 
@@ -1223,8 +1226,8 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
           type: 'side', 
           category: 'income',
           amounts: {}, 
-          investmentRatio: parameters.investmentRatio || 0,
-          maxInvestmentAmount: parameters.maxInvestmentAmount || 0
+          investmentRatio: 0,
+          maxInvestmentAmount: 0
         },
         { 
           id: '4', 
@@ -1232,8 +1235,8 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
           type: 'income', 
           category: 'income',
           amounts: {}, 
-          investmentRatio: parameters.investmentRatio || 0,
-          maxInvestmentAmount: parameters.maxInvestmentAmount || 0,
+          investmentRatio: 0,
+          maxInvestmentAmount: 0,
           isAutoCalculated: true
         },
       ],
@@ -1244,8 +1247,8 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
           type: 'income', 
           category: 'income',
           amounts: {}, 
-          investmentRatio: parameters.investmentRatio || 0,
-          maxInvestmentAmount: parameters.maxInvestmentAmount || 0
+          investmentRatio: 0,
+          maxInvestmentAmount: 0
         },
         { 
           id: '2', 
@@ -1253,8 +1256,8 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
           type: 'income', 
           category: 'income',
           amounts: {}, 
-          investmentRatio: parameters.investmentRatio || 0,
-          maxInvestmentAmount: parameters.maxInvestmentAmount || 0
+          investmentRatio: 0,
+          maxInvestmentAmount: 0
         },
       ],
     };
@@ -1270,8 +1273,8 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
           type: 'income',
           category: 'income',
           amounts: {},
-          investmentRatio: parameters.investmentRatio || 5,
-          maxInvestmentAmount: parameters.maxInvestmentAmount || 50,
+          investmentRatio: 0,
+          maxInvestmentAmount: 0,
           isAutoCalculated: true
         });
       }
@@ -1289,8 +1292,8 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
           type: 'income',
           category: 'income',
           amounts: {},
-          investmentRatio: parameters.investmentRatio || 10,
-          maxInvestmentAmount: parameters.maxInvestmentAmount || 100
+          investmentRatio: 0,
+          maxInvestmentAmount: 0
         });
       }
     }

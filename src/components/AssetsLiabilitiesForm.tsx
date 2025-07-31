@@ -28,6 +28,174 @@ interface LoanCalculationSettings {
   repaymentType: 'equal_principal' | 'equal_payment';
 }
 
+// 収入投資設定モーダル用のインターフェース（新規追加）
+interface IncomeInvestmentModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  onApply: (settings: IncomeInvestmentSettings) => void;
+  initialSettings?: IncomeInvestmentSettings;
+  itemName: string;
+  section: 'personal' | 'corporate';
+}
+
+interface IncomeInvestmentSettings {
+  linkedIncomeId: string;
+  investmentRatio: number;
+  maxInvestmentAmount: number;
+}
+
+// 収入投資設定モーダルコンポーネント（新規追加）
+const IncomeInvestmentModal: React.FC<IncomeInvestmentModalProps> = ({
+  isOpen,
+  onClose,
+  onApply,
+  initialSettings,
+  itemName,
+  section
+}) => {
+  const { incomeData, basicInfo } = useSimulatorStore();
+  const [settings, setSettings] = useState<IncomeInvestmentSettings>(
+    initialSettings || {
+      linkedIncomeId: '',
+      investmentRatio: 0,
+      maxInvestmentAmount: 0,
+    }
+  );
+
+  const years = Array.from(
+    { length: Math.min(5, basicInfo.deathAge - basicInfo.currentAge + 1) }, // プレビューは5年分まで
+    (_, i) => basicInfo.startYear + i
+  );
+
+  if (!isOpen) return null;
+
+  // プレビュー計算
+  const calculatePreview = () => {
+    if (!settings.linkedIncomeId) return [];
+    
+    const linkedIncome = incomeData[section].find(
+      income => income.id === settings.linkedIncomeId
+    );
+    
+    if (!linkedIncome) return [];
+
+    return years.map(year => {
+      const incomeAmount = linkedIncome.amounts[year] || 0;
+      const investmentAmount = Math.min(
+        incomeAmount * (settings.investmentRatio / 100),
+        settings.maxInvestmentAmount || Infinity
+      );
+      
+      return {
+        year,
+        incomeAmount,
+        investmentAmount: Math.round(investmentAmount * 10) / 10
+      };
+    });
+  };
+
+  const preview = calculatePreview();
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+      <div className="bg-white rounded-lg p-6 w-full max-w-lg max-h-[90vh] overflow-y-auto">
+        <div className="flex justify-between items-center mb-4">
+          <h3 className="text-lg font-bold">収入投資設定 - {itemName}</h3>
+          <button onClick={onClose} className="text-gray-500 hover:text-gray-700">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <div className="space-y-4">
+          <div className="space-y-2">
+            <label className="text-sm font-medium">投資元となる収入項目</label>
+            <select
+              value={settings.linkedIncomeId}
+              onChange={(e) => setSettings({...settings, linkedIncomeId: e.target.value})}
+              className="w-full rounded-md border border-gray-200 px-3 py-2"
+            >
+              <option value="">収入項目を選択</option>
+              {incomeData[section].map(income => (
+                <option key={income.id} value={income.id}>
+                  {income.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-sm font-medium">投資割合（%）</label>
+            <input
+              type="number"
+              min="0"
+              max="100"
+              value={settings.investmentRatio}
+              onChange={(e) => setSettings({...settings, investmentRatio: Number(e.target.value)})}
+              className="w-full rounded-md border border-gray-200 px-3 py-2"
+              placeholder="0"
+            />
+            <p className="text-xs text-gray-500">
+              ※収入の何%を投資に回すか
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-sm font-medium">年間投資上限（万円）</label>
+            <input
+              type="number"
+              min="0"
+              value={settings.maxInvestmentAmount}
+              onChange={(e) => setSettings({...settings, maxInvestmentAmount: Number(e.target.value)})}
+              className="w-full rounded-md border border-gray-200 px-3 py-2"
+              placeholder="0"
+            />
+            <p className="text-xs text-gray-500">
+              ※0の場合は上限なし
+            </p>
+          </div>
+
+          {/* プレビュー表示 */}
+          {settings.linkedIncomeId && (
+            <div className="bg-gray-50 p-4 rounded-md">
+              <h4 className="text-sm font-medium text-gray-800 mb-2">プレビュー</h4>
+              <div className="text-sm text-gray-700 space-y-1">
+                {preview.length > 0 ? (
+                  preview.map(item => (
+                    <div key={item.year} className="flex justify-between">
+                      <span>{item.year}年:</span>
+                      <span>
+                        収入{item.incomeAmount}万円 → 投資{item.investmentAmount}万円
+                      </span>
+                    </div>
+                  ))
+                ) : (
+                  <p className="text-gray-500">収入データがありません</p>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="flex justify-end space-x-3 mt-6">
+          <button
+            onClick={onClose}
+            className="px-4 py-2 bg-gray-300 text-gray-700 rounded-md hover:bg-gray-400"
+          >
+            キャンセル
+          </button>
+          <button
+            onClick={() => onApply(settings)}
+            className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600"
+            disabled={!settings.linkedIncomeId}
+          >
+            適用
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // 自動計算モーダルコンポーネント（過去借入対応版）
 const LoanCalculationModal: React.FC<LoanCalculationModalProps> = ({
   isOpen,
@@ -300,6 +468,7 @@ export function AssetsLiabilitiesForm() {
     setAssetData,
     liabilityData,
     setLiabilityData,
+    incomeData,
     syncCashFlowFromFormData
   } = useSimulatorStore();
 
@@ -307,6 +476,10 @@ export function AssetsLiabilitiesForm() {
   const [loanModalOpen, setLoanModalOpen] = useState(false);
   const [currentLiabilityId, setCurrentLiabilityId] = useState('');
   const [currentSection, setCurrentSection] = useState<'personal' | 'corporate'>('personal');
+
+  // 収入投資モーダルの状態（新規追加）
+  const [incomeInvestmentModalOpen, setIncomeInvestmentModalOpen] = useState(false);
+  const [currentAssetId, setCurrentAssetId] = useState('');
 
   const years = Array.from(
     { length: basicInfo.deathAge - basicInfo.currentAge + 1 },
@@ -427,18 +600,46 @@ export function AssetsLiabilitiesForm() {
   const handleAssetTypeChange = (
     section: 'personal' | 'corporate',
     itemId: string,
-    value: 'cash' | 'investment' | 'property' | 'other'
+    value: 'cash' | 'investment' | 'property' | 'income_investment' | 'other'
   ) => {
     setAssetData({
       ...assetData,
-      [section]: assetData[section].map(item =>
-        item.id === itemId
-          ? {
-              ...item,
-              type: value,
+      [section]: assetData[section].map(item => {
+        if (item.id === itemId) {
+          const updatedItem = {
+            ...item,
+            type: value,
+          };
+          
+          // 収入投資に変更した場合、名前を自動設定
+          if (value === 'income_investment' && !item.name) {
+            updatedItem.name = '収入投資';
+          }
+          
+          // 収入投資の場合、投資フラグを自動的にオンにする
+          if (value === 'income_investment') {
+            updatedItem.isInvestment = true;
+            updatedItem.isIncomeInvestment = true;
+            // デフォルト値を設定
+            if (!updatedItem.investmentRatio) {
+              updatedItem.investmentRatio = 0;
             }
-          : item
-      ),
+            if (!updatedItem.maxInvestmentAmount) {
+              updatedItem.maxInvestmentAmount = 0;
+            }
+          } else {
+            // 収入投資以外に変更した場合、収入投資関連のプロパティをクリア
+            delete updatedItem.isIncomeInvestment;
+            delete updatedItem.linkedIncomeId;
+            delete updatedItem.linkedIncomeType;
+            delete updatedItem.investmentRatio;
+            delete updatedItem.maxInvestmentAmount;
+          }
+          
+          return updatedItem;
+        }
+        return item;
+      }),
     });
     syncCashFlowFromFormData();
   };
@@ -535,6 +736,54 @@ export function AssetsLiabilitiesForm() {
           ? {
               ...item,
               investmentReturn: value,
+            }
+          : item
+      ),
+    });
+    syncCashFlowFromFormData();
+  };
+
+  // 収入投資モーダルを開く（新規追加）
+  const openIncomeInvestmentModal = (assetId: string, section: 'personal' | 'corporate') => {
+    setCurrentAssetId(assetId);
+    setCurrentSection(section);
+    setIncomeInvestmentModalOpen(true);
+  };
+
+  // 収入投資設定を適用（新規追加）
+  const applyIncomeInvestmentSettings = (settings: IncomeInvestmentSettings) => {
+    if (!currentAssetId) return;
+
+    setAssetData({
+      ...assetData,
+      [currentSection]: assetData[currentSection].map(item =>
+        item.id === currentAssetId
+          ? {
+              ...item,
+              linkedIncomeId: settings.linkedIncomeId,
+              linkedIncomeType: currentSection,
+              investmentRatio: settings.investmentRatio,
+              maxInvestmentAmount: settings.maxInvestmentAmount,
+            }
+          : item
+      ),
+    });
+
+    syncCashFlowFromFormData();
+    setIncomeInvestmentModalOpen(false);
+  };
+
+  // 収入投資設定をクリア（新規追加）
+  const clearIncomeInvestmentSettings = (section: 'personal' | 'corporate', assetId: string) => {
+    setAssetData({
+      ...assetData,
+      [section]: assetData[section].map(item =>
+        item.id === assetId
+          ? {
+              ...item,
+              linkedIncomeId: undefined,
+              investmentRatio: 0,
+              maxInvestmentAmount: 0,
             }
           : item
       ),
@@ -944,6 +1193,12 @@ export function AssetsLiabilitiesForm() {
                 <th className="px-4 py-2 text-center text-sm font-medium text-gray-500 min-w-[120px]">
                   カテゴリ
                 </th>
+                <th className="px-4 py-2 text-center text-sm font-medium text-gray-500 min-w-[100px]">
+                  投資設定
+                  <TermTooltip term="" width="narrow">
+                    収入投資の詳細設定を行います。投資元の収入項目、投資割合、上限額を設定できます。
+                  </TermTooltip>
+                </th>
                 <th className="px-4 py-2 text-center text-sm font-medium text-gray-500 min-w-[80px]">
                   運用資産
                   <TermTooltip term="" width="narrow">
@@ -980,12 +1235,13 @@ export function AssetsLiabilitiesForm() {
                   <td className="px-4 py-2">
                     <select
                       value={item.type}
-                      onChange={(e) => handleAssetTypeChange(section, item.id, e.target.value as 'cash' | 'investment' | 'property' | 'other')}
+                      onChange={(e) => handleAssetTypeChange(section, item.id, e.target.value as 'cash' | 'investment' | 'property' | 'income_investment' | 'other')}
                       className="w-full rounded-md border border-gray-200 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent min-w-[100px]"
                     >
                       <option value="cash">現金・預金</option>
                       <option value="investment">投資</option>
                       <option value="property">不動産</option>
+                      <option value="income_investment">収入投資</option>
                       <option value="other">その他</option>
                     </select>
                   </td>
@@ -998,11 +1254,47 @@ export function AssetsLiabilitiesForm() {
                     />
                   </td>
                   <td className="px-4 py-2 text-center">
+                    {item.type === 'income_investment' ? (
+                      <div className="flex flex-col items-center space-y-1">
+                        {item.linkedIncomeId ? (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => openIncomeInvestmentModal(item.id, section)}
+                              className="inline-flex items-center px-2 py-1 text-xs bg-green-100 text-green-800 rounded hover:bg-green-200"
+                            >
+                              <span>設定済み</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => clearIncomeInvestmentSettings(section, item.id)}
+                              className="text-xs text-red-600 hover:text-red-800"
+                            >
+                              クリア
+                            </button>
+                          </>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => openIncomeInvestmentModal(item.id, section)}
+                            className="inline-flex items-center px-2 py-1 text-xs bg-purple-100 text-purple-800 rounded hover:bg-purple-200"
+                          >
+                            <Wand2 className="h-3 w-3 mr-1" />
+                            <span>設定</span>
+                          </button>
+                        )}
+                      </div>
+                    ) : (
+                      <span className="text-gray-400 text-sm">-</span>
+                    )}
+                  </td>
+                  <td className="px-4 py-2 text-center">
                     <input
                       type="checkbox"
                       checked={item.isInvestment}
                       onChange={() => toggleAssetInvestment(section, item.id)}
                       className="rounded border-gray-300"
+                      disabled={item.type === 'income_investment'} // 収入投資の場合は常にチェック
                     />
                   </td>
                   <td className="px-4 py-2">
@@ -1028,8 +1320,11 @@ export function AssetsLiabilitiesForm() {
                         type="number"
                         value={item.amounts[year] || ''}
                         onChange={(e) => handleAssetAmountChange(section, item.id, year, Number(e.target.value))}
-                        className="w-full text-right rounded-md border border-gray-200 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        className={`w-full text-right rounded-md border border-gray-200 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
+                          item.type === 'income_investment' ? 'bg-gray-100' : ''
+                        }`}
                         placeholder="0"
+                        disabled={item.type === 'income_investment'} // 収入投資の場合は自動計算のため入力不可
                       />
                     </td>
                   ))}
@@ -1198,6 +1493,7 @@ export function AssetsLiabilitiesForm() {
         <p className="text-sm text-blue-700">
           資産（プラスの財産）と負債（マイナスの財産）を個人・法人別に入力します。運用資産にチェックを入れた項目は、
           設定した運用利回りで増加していきます。負債には「自動計算」機能があり、借入条件を設定すると返済スケジュールを自動作成できます。
+          <strong>収入投資</strong>を選択すると、収入の一部を自動的に投資に回すことができます。
         </p>
       </div>
 
@@ -1214,6 +1510,25 @@ export function AssetsLiabilitiesForm() {
             <li>「計算実行」で返済スケジュールを自動生成</li>
           </ol>
           <p><strong>注意：</strong>自動計算を設定した項目は、借入年以外の手動入力ができなくなります。</p>
+        </div>
+      </div>
+
+      {/* 収入投資機能の説明を追加 */}
+      <div className="bg-green-50 p-4 rounded-md mb-4">
+        <h3 className="text-md font-medium text-green-800 mb-2">収入投資機能について</h3>
+        <p className="text-sm text-green-700 mb-2">
+          種類で「収入投資」を選択すると、収入の一部を自動的に投資資産として積み立てることができます。
+        </p>
+        <div className="text-sm text-green-700">
+          <p className="font-medium">設定方法：</p>
+          <ol className="list-decimal pl-4 space-y-1">
+            <li>資産の種類で「収入投資」を選択</li>
+            <li>「投資設定」ボタンをクリック</li>
+            <li>投資元となる収入項目を選択</li>
+            <li>投資割合（%）を設定</li>
+            <li>最大投資額（年間上限）を設定</li>
+            <li>運用利回りを設定</li>
+          </ol>
         </div>
       </div>
 
@@ -1279,6 +1594,24 @@ export function AssetsLiabilitiesForm() {
         itemName={
           liabilityData[currentSection].find(i => i.id === currentLiabilityId)?.name || '負債'
         }
+      />
+      
+      {/* 収入投資設定モーダル（新規追加） */}
+      <IncomeInvestmentModal
+        isOpen={incomeInvestmentModalOpen}
+        onClose={() => setIncomeInvestmentModalOpen(false)}
+        onApply={applyIncomeInvestmentSettings}
+        initialSettings={
+          currentAssetId ? {
+            linkedIncomeId: assetData[currentSection].find(i => i.id === currentAssetId)?.linkedIncomeId || '',
+            investmentRatio: assetData[currentSection].find(i => i.id === currentAssetId)?.investmentRatio || 0,
+            maxInvestmentAmount: assetData[currentSection].find(i => i.id === currentAssetId)?.maxInvestmentAmount || 0,
+          } : undefined
+        }
+        itemName={
+          assetData[currentSection].find(i => i.id === currentAssetId)?.name || '収入投資'
+        }
+        section={currentSection}
       />
       
       {/* コンテキストヘルプコンポーネントを追加 */}

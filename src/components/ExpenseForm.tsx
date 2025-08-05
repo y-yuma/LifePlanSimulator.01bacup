@@ -45,6 +45,14 @@ interface CostSettingsModalProps {
   itemName: string;
 }
 
+// 社会保険料計算関数（役員用、雇用保険除外）
+const calculateDirectorSocialInsurance = (annualSalary: number): number => {
+  if (annualSalary <= 0) return 0;
+  // 役員の場合、雇用保険を除いた社会保険料率を適用
+  const directorSocialInsuranceRate = annualSalary < 850 ? 0.144 : 0.077;
+  return Math.floor(annualSalary * directorSocialInsuranceRate);
+};
+
 // 原価設定モーダルコンポーネント
 const CostSettingsModal: React.FC<CostSettingsModalProps> = ({
   isOpen,
@@ -381,6 +389,12 @@ export function ExpenseForm() {
       });
     }
   }, []);
+
+  // 従業員給与かどうかを判定する関数
+  const isEmployeeSalary = (itemName: string, section: 'personal' | 'corporate'): boolean => {
+    return section === 'corporate' && 
+           (itemName.includes('従業員給与') || itemName.includes('給与') || itemName.includes('人件費'));
+  };
 
   // 自動入力モーダルを開く
   const openAutofillModal = (itemId: string, section: 'personal' | 'corporate') => {
@@ -805,18 +819,26 @@ export function ExpenseForm() {
                   </td>
                   {years.map(year => (
                     <td key={year} className="px-4 py-2">
-                      <input
-                        type="number"
-                        value={item.amounts[year] || ''}
-                        onChange={(e) => handleAmountChange(section, item.id, year, Number(e.target.value))}
-                        disabled={item.category === 'cost' && item._costSettings} // 原価設定済みの場合は手動入力を無効化
-                        className={`w-full text-right rounded-md border text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
-                          item.category === 'cost' && item._costSettings 
-                            ? 'bg-green-50 border-green-200 text-green-800' 
-                            : 'border-gray-200'
-                        }`}
-                        placeholder="0"
-                      />
+                      <div className="relative">
+                        <input
+                          type="number"
+                          value={item.amounts[year] || ''}
+                          onChange={(e) => handleAmountChange(section, item.id, year, Number(e.target.value))}
+                          disabled={item.category === 'cost' && item._costSettings} // 原価設定済みの場合は手動入力を無効化
+                          className={`w-full text-right rounded-md border text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
+                            item.category === 'cost' && item._costSettings 
+                              ? 'bg-green-50 border-green-200 text-green-800' 
+                              : 'border-gray-200'
+                          }`}
+                          placeholder="0"
+                        />
+                        {/* ★社会保険料表示機能追加★ */}
+                        {section === 'corporate' && isEmployeeSalary(item.name, section) && item.amounts[year] && item.amounts[year] > 0 && (
+                          <div className="text-xs text-gray-500 mt-1">
+                            社保: {calculateDirectorSocialInsurance(item.amounts[year])}万円 ({item.amounts[year] < 850 ? '14.4' : '7.7'}%)
+                          </div>
+                        )}
+                      </div>
                     </td>
                   ))}
                   <td className="px-4 py-2 text-center">
@@ -869,6 +891,24 @@ export function ExpenseForm() {
           「法人原価」は売上に応じて自動計算され、独立した上昇率を設定できます。
           その他のカテゴリには自動的にパラメータで設定したインフレ率や教育費上昇率が適用されます。
         </p>
+      </div>
+
+      {/* 法人従業員給与について */}
+      <div className="bg-indigo-50 p-4 rounded-md mb-4">
+        <h3 className="text-md font-medium text-indigo-800 mb-2 flex items-center">
+          <Settings className="h-4 w-4 mr-2" />
+          <span>法人従業員給与について</span>
+        </h3>
+        <div className="text-sm text-indigo-700 space-y-2">
+          <p><strong>社会保険料の自動表示：</strong></p>
+          <ul className="list-disc pl-4 space-y-1">
+            <li>法人経費で「従業員給与」「給与」「人件費」を含む項目名の場合、社会保険料が自動表示されます</li>
+            <li>役員は雇用保険の対象外のため、雇用保険を除外した社会保険料（年収850万円未満：14.4%、850万円以上：7.7%）で計算されます</li>
+            <li>表示される社会保険料は個人負担分のみです（法人負担分は別途自動計算されます）</li>
+            <li>健康保険、厚生年金保険、介護保険（40歳以上）が含まれます</li>
+          </ul>
+          <p><strong>使用例：</strong> 項目名を「従業員給与（田中）」「役員報酬」などにすると社保が自動表示されます</p>
+        </div>
       </div>
 
       {/* 法人原価について */}

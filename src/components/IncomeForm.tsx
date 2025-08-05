@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import { useSimulatorStore } from '@/store/simulator';
-import { Plus, X, Wand2, Trash2 } from 'lucide-react';
+import { Plus, X, Wand2, Trash2, Building2, Settings } from 'lucide-react';
 import { CategorySelect, INCOME_CATEGORIES } from '@/components/ui/category-select';
-import { calculateNetIncome } from '@/lib/calculations';
+import { calculateNetIncome, calculateNetIncomeForDirector } from '@/lib/calculations';
 import { TermTooltip } from '@/components/common/TermTooltip';
 import { ContextHelp } from '@/components/common/ContextHelp';
 import { FormulaAccordion } from '@/components/common/FormulaAccordion';
@@ -16,6 +16,300 @@ interface AutofillSettings {
   raiseAmount: number;
   maxAmount?: number;
 }
+
+// 法人給与設定モーダル用の型定義
+interface CorporateSalarySettings {
+  corporateSalaryType: 'full-time' | 'part-time';
+  socialInsuranceByYear: { [year: number]: boolean };
+  // 自動切り替え用の新規プロパティ
+  autoSwitchEnabled?: boolean;
+  autoSwitchIncomeIds?: string[];
+  // モーダル内で手動変更した年度を記録
+  manuallyChangedYears?: { [year: number]: boolean };
+}
+
+// 法人給与設定モーダルコンポーネント
+const CorporateSalaryModal: React.FC<{
+  isOpen: boolean;
+  onClose: () => void;
+  onApply: (settings: CorporateSalarySettings) => void;
+  years: number[];
+  currentSettings?: CorporateSalarySettings;
+  itemName: string;
+}> = ({ isOpen, onClose, onApply, years, currentSettings, itemName }) => {
+  const { incomeData } = useSimulatorStore();
+  
+  const [settings, setSettings] = useState<CorporateSalarySettings>(() => {
+    // デフォルト設定
+    const defaultSettings: CorporateSalarySettings = {
+      corporateSalaryType: 'full-time',
+      socialInsuranceByYear: years.reduce((acc, year) => {
+        acc[year] = true;
+        return acc;
+      }, {} as { [year: number]: boolean }),
+      autoSwitchEnabled: false,
+      autoSwitchIncomeIds: [],
+      manuallyChangedYears: {}
+    };
+
+    // currentSettingsが存在する場合はマージ
+    if (currentSettings) {
+      return {
+        ...defaultSettings,
+        ...currentSettings,
+        // socialInsuranceByYearが存在しない場合はデフォルト値を使用
+        socialInsuranceByYear: currentSettings.socialInsuranceByYear || defaultSettings.socialInsuranceByYear,
+        manuallyChangedYears: {}  // モーダルを開くたびにリセット
+      };
+    }
+
+    return defaultSettings;
+  });
+
+  if (!isOpen) return null;
+
+  const toggleSocialInsurance = (year: number) => {
+    setSettings({
+      ...settings,
+      socialInsuranceByYear: {
+        ...settings.socialInsuranceByYear,
+        [year]: !settings.socialInsuranceByYear[year]
+      },
+      manuallyChangedYears: {
+        ...settings.manuallyChangedYears,
+        [year]: true  // この年度は手動で変更されたことを記録
+      }
+    });
+  };
+
+  const setAllYearsSocialInsurance = (value: boolean) => {
+    const newSocialInsuranceByYear = years.reduce((acc, year) => {
+      acc[year] = value;
+      return acc;
+    }, {} as { [year: number]: boolean });
+    
+    // すべて有り/無しを押した場合、全年度を手動変更扱いにする
+    const newManuallyChangedYears = years.reduce((acc, year) => {
+      acc[year] = true;
+      return acc;
+    }, {} as { [year: number]: boolean });
+    
+    setSettings({
+      ...settings,
+      socialInsuranceByYear: newSocialInsuranceByYear,
+      manuallyChangedYears: newManuallyChangedYears
+    });
+  };
+
+  const toggleAutoSwitch = () => {
+    setSettings({
+      ...settings,
+      autoSwitchEnabled: !settings.autoSwitchEnabled
+    });
+  };
+
+  const toggleIncomeSelection = (incomeId: string) => {
+    const currentIds = settings.autoSwitchIncomeIds || [];
+    setSettings({
+      ...settings,
+      autoSwitchIncomeIds: currentIds.includes(incomeId)
+        ? currentIds.filter(id => id !== incomeId)
+        : [...currentIds, incomeId]
+    });
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+      <div className="bg-white rounded-lg p-6 w-full max-w-2xl max-h-[80vh] overflow-y-auto">
+        <div className="flex justify-between items-center mb-4">
+          <h3 className="text-lg font-bold">{itemName} - 法人給与設定</h3>
+          <button onClick={onClose} className="text-gray-500 hover:text-gray-700">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <div className="space-y-6">
+          {/* 専業/副業選択 */}
+          <div className="space-y-2">
+            <label className="text-sm font-medium">雇用形態</label>
+            <div className="flex space-x-4">
+              <label className="flex items-center space-x-2">
+                <input
+                  type="radio"
+                  value="full-time"
+                  checked={settings.corporateSalaryType === 'full-time'}
+                  onChange={(e) => setSettings({ ...settings, corporateSalaryType: 'full-time' })}
+                  className="text-blue-600"
+                />
+                <span>専業（役員）</span>
+              </label>
+              <label className="flex items-center space-x-2">
+                <input
+                  type="radio"
+                  value="part-time"
+                  checked={settings.corporateSalaryType === 'part-time'}
+                  onChange={(e) => setSettings({ ...settings, corporateSalaryType: 'part-time' })}
+                  className="text-blue-600"
+                />
+                <span>副業（業務委託等）</span>
+              </label>
+            </div>
+          </div>
+
+          {/* 社保設定説明 */}
+          <div className="bg-blue-50 p-4 rounded-md">
+            <p className="text-sm text-blue-700">
+              <strong>専業（役員）の場合：</strong>原則として社会保険加入が必要です。法人負担分も含めて計算されます。<br/>
+              <strong>副業（業務委託等）の場合：</strong>本業で社保加入済みの場合は、社保なしで計算されます。
+            </p>
+          </div>
+
+          {/* 副業選択時の自動切り替え設定 */}
+          {settings.corporateSalaryType === 'part-time' && (
+            <div className="space-y-4 border-t pt-4">
+              <div className="flex items-center space-x-2">
+                <input
+                  type="checkbox"
+                  id="autoSwitch"
+                  checked={settings.autoSwitchEnabled}
+                  onChange={toggleAutoSwitch}
+                  className="rounded text-blue-600"
+                />
+                <label htmlFor="autoSwitch" className="text-sm font-medium">
+                  自動切り替え機能を有効にする
+                </label>
+              </div>
+
+              {settings.autoSwitchEnabled && (
+                <div className="ml-6 space-y-2">
+                  <div className="text-sm text-gray-700">
+                    <p className="font-medium mb-2">監視対象の収入項目を選択してください：</p>
+                    <p className="text-xs text-gray-500 mb-3">
+                      法人給与が選択した収入項目の合計を上回った年度は、自動的に社会保険ありに切り替わります。
+                    </p>
+                  </div>
+                  
+                  <div className="max-h-32 overflow-y-auto border border-gray-200 rounded-md p-2 space-y-1">
+                    {incomeData.personal
+                      .filter(item => !item.isCorporateSalary) // 法人給与以外を表示
+                      .map(item => (
+                        <label key={item.id} className="flex items-center space-x-2 cursor-pointer hover:bg-gray-50 p-1 rounded">
+                          <input
+                            type="checkbox"
+                            checked={(settings.autoSwitchIncomeIds || []).includes(item.id)}
+                            onChange={() => toggleIncomeSelection(item.id)}
+                            className="rounded text-blue-600"
+                          />
+                          <span className="text-sm">{item.name}</span>
+                        </label>
+                      ))}
+                  </div>
+                  
+                  <div className="bg-yellow-50 p-3 rounded-md">
+                    <p className="text-xs text-yellow-700">
+                      <strong>注意：</strong>手動で社保設定を変更した年度は、自動切り替えが無効になります。
+                      自動切り替えを再度有効にするには、その年度の設定をリセットしてください。
+                    </p>
+                    {settings.autoSwitchIncomeIds && settings.autoSwitchIncomeIds.length > 0 && (
+                      <div className="mt-2 text-xs text-yellow-700">
+                        <strong>選択した収入項目：</strong>
+                        {settings.autoSwitchIncomeIds.map(id => {
+                          const income = incomeData.personal.find(item => item.id === id);
+                          return income ? income.name : '';
+                        }).filter(name => name).join('、')}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* 年度ごとの社保設定 */}
+          <div className="space-y-2">
+            <div className="flex justify-between items-center">
+              <label className="text-sm font-medium">年度ごとの社会保険設定</label>
+              <div className="space-x-2">
+                <button
+                  onClick={() => setAllYearsSocialInsurance(true)}
+                  className="px-3 py-1 text-sm bg-blue-500 text-white rounded hover:bg-blue-600"
+                >
+                  すべて有り
+                </button>
+                <button
+                  onClick={() => setAllYearsSocialInsurance(false)}
+                  className="px-3 py-1 text-sm bg-gray-500 text-white rounded hover:bg-gray-600"
+                >
+                  すべて無し
+                </button>
+              </div>
+            </div>
+            
+            <div className="max-h-60 overflow-y-auto border border-gray-200 rounded-md">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50 sticky top-0">
+                  <tr>
+                    <th className="px-4 py-2 text-left text-sm font-medium text-gray-700">年度</th>
+                    <th className="px-4 py-2 text-center text-sm font-medium text-gray-700">社会保険</th>
+                    {settings.autoSwitchEnabled && settings.corporateSalaryType === 'part-time' && (
+                      <th className="px-4 py-2 text-center text-sm font-medium text-gray-700">自動/手動</th>
+                    )}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-200">
+                  {years.map(year => (
+                    <tr key={year} className="hover:bg-gray-50">
+                      <td className="px-4 py-2 text-sm">{year}年</td>
+                      <td className="px-4 py-2 text-center">
+                        <input
+                          type="checkbox"
+                          checked={settings.socialInsuranceByYear[year] || false}
+                          onChange={() => toggleSocialInsurance(year)}
+                          className="rounded text-blue-600"
+                          disabled={settings.corporateSalaryType === 'full-time'}
+                        />
+                      </td>
+                      {settings.autoSwitchEnabled && settings.corporateSalaryType === 'part-time' && (
+                        <td className="px-4 py-2 text-center">
+                          <span className="text-xs text-gray-500">
+                            {settings.manuallyChangedYears?.[year] 
+                              ? <span className="text-orange-600 font-medium">手動</span>
+                              : <span className="text-green-600 font-medium">自動</span>}
+                          </span>
+                        </td>
+                      )}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            
+            {settings.corporateSalaryType === 'part-time' && !settings.autoSwitchEnabled && (
+              <p className="text-xs text-gray-500">
+                ※ 副業の場合、基本的に社会保険は適用されません
+              </p>
+            )}
+          </div>
+        </div>
+
+        <div className="flex justify-end space-x-3 mt-6">
+          <button
+            onClick={onClose}
+            className="px-4 py-2 bg-gray-300 text-gray-700 rounded-md hover:bg-gray-400"
+          >
+            キャンセル
+          </button>
+          <button
+            onClick={() => onApply(settings)}
+            className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600"
+          >
+            適用
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 // 自動入力モーダルコンポーネント
 const AutofillModal: React.FC<{
@@ -199,6 +493,10 @@ export function IncomeForm() {
   const [currentSection, setCurrentSection] = useState<'personal' | 'corporate'>('personal');
   const [autofillSettings, setAutofillSettings] = useState<{[key: string]: AutofillSettings}>({});
 
+  // 法人給与設定モーダルの状態
+  const [corporateSalaryModalOpen, setCorporateSalaryModalOpen] = useState(false);
+  const [corporateSalarySettings, setCorporateSalarySettings] = useState<{[key: string]: CorporateSalarySettings}>({});
+
   const years = Array.from(
     { length: basicInfo.deathAge - basicInfo.currentAge + 1 },
     (_, i) => basicInfo.startYear + i
@@ -289,6 +587,7 @@ export function IncomeForm() {
       <h4 className="font-bold text-gray-800">収入関連の用語</h4>
       <ul className="space-y-2">
         <li><span className="font-bold">給与収入</span>: 会社員・公務員などが得る給料やボーナスなどの収入</li>
+        <li><span className="font-bold">法人給与</span>: 自身の法人から受け取る役員報酬や給与。法人経費に自動連携されます</li>
         <li><span className="font-bold">事業収入</span>: 自営業者やフリーランスが得る事業による収入</li>
         <li><span className="font-bold">副業収入</span>: 本業以外から得られる収入</li>
         <li><span className="font-bold">年金収入</span>: 国民年金や厚生年金からの給付金</li>
@@ -301,6 +600,14 @@ export function IncomeForm() {
         <li><span className="font-bold">手取り収入</span>: 税金や社会保険料が引かれた後の実際に受け取る金額</li>
         <li><span className="font-bold">給与所得控除</span>: 給与所得から一定額を控除する制度。収入額に応じて控除額が変わる</li>
         <li><span className="font-bold">社会保険料</span>: 健康保険、厚生年金保険、雇用保険、介護保険などの保険料の総称</li>
+      </ul>
+
+      <h4 className="font-bold text-gray-800">法人給与関連</h4>
+      <ul className="space-y-2">
+        <li><span className="font-bold">専業（役員）</span>: 法人の役員として専業で働く場合。社会保険加入が必要</li>
+        <li><span className="font-bold">副業（業務委託等）</span>: 本業がある状態で法人から報酬を受け取る場合</li>
+        <li><span className="font-bold">法人負担社保</span>: 法人が負担する社会保険料。個人負担分とほぼ同額</li>
+        <li><span className="font-bold">自動切り替え</span>: 法人給与が監視対象収入を上回った場合に自動で社保ありに切り替える機能</li>
       </ul>
 
       <h4 className="font-bold text-gray-800">自動入力関連</h4>
@@ -348,6 +655,26 @@ export function IncomeForm() {
       </FormulaAccordion>
 
       <FormulaAccordion 
+        title="法人給与の計算式" 
+        bgColor="bg-blue-50" 
+        textColor="text-blue-800" 
+        borderColor="border-blue-200"
+      >
+        <FormulaSyntax formula={`【個人側】
+役員報酬手取り = 額面 - 給与所得控除 - 社保(雇用保険除く) - 所得税 - 住民税
+
+【法人側】
+従業員給与費用 = 役員報酬額面 + 法人負担社保 + 子ども・子育て拠出金 + 労災保険
+
+法人負担社保 = 
+  - 年収850万円未満: 額面 × 14.4%
+  - 年収850万円以上: 額面 × 7.7%
+
+子ども・子育て拠出金 = 額面 × 0.36%
+労災保険料 = 額面 × 0.3%（業種により異なる）`} />
+      </FormulaAccordion>
+
+      <FormulaAccordion 
         title="収入増加計算式（割合方式）" 
         bgColor="bg-green-50" 
         textColor="text-green-800" 
@@ -380,13 +707,71 @@ export function IncomeForm() {
   );
 
   // 給与収入が手取り計算対象かどうか判定する関数
-  const isNetIncomeTarget = (itemName: string) => {
+  const isNetIncomeTarget = (itemName: string, item?: any) => {
+    // 法人給与の場合は別判定
+    if (item?.isCorporateSalary) {
+      return true;
+    }
+    
     return (
       (itemName === '給与収入' && 
        (basicInfo.occupation === 'company_employee' || basicInfo.occupation === 'part_time_with_pension')) ||
       (itemName === '配偶者収入' && basicInfo.spouseInfo?.occupation && 
        (basicInfo.spouseInfo.occupation === 'company_employee' || basicInfo.spouseInfo.occupation === 'part_time_with_pension'))
     );
+  };
+
+  // 法人給与設定モーダルを開く
+  const openCorporateSalaryModal = (itemId: string) => {
+    setCurrentItemId(itemId);
+    setCorporateSalaryModalOpen(true);
+  };
+
+  // 法人給与設定を適用
+  const applyCorporateSalarySettings = (settings: CorporateSalarySettings) => {
+    const item = incomeData[currentSection].find(i => i.id === currentItemId);
+    if (!item) return;
+
+    // 設定を保存
+    setCorporateSalarySettings({
+      ...corporateSalarySettings,
+      [currentItemId]: settings
+    });
+
+    // 手動で変更された年度のみmanualOverrideYearsに追加
+    let manualOverrideYears = { ...(item.manualOverrideYears || {}) };
+    
+    // モーダル内で手動変更された年度のみ手動フラグを立てる
+    if (settings.manuallyChangedYears) {
+      Object.keys(settings.manuallyChangedYears).forEach(yearStr => {
+        const year = parseInt(yearStr);
+        if (settings.manuallyChangedYears![year]) {
+          manualOverrideYears[year] = true;
+        }
+      });
+    }
+
+    // アイテムに法人給与フラグと設定を追加
+    setIncomeData({
+      ...incomeData,
+      [currentSection]: incomeData[currentSection].map(i => {
+        if (i.id === currentItemId) {
+          return {
+            ...i,
+            isCorporateSalary: true,
+            corporateSalaryType: settings.corporateSalaryType,
+            socialInsuranceByYear: settings.socialInsuranceByYear,
+            autoSwitchEnabled: settings.autoSwitchEnabled,
+            autoSwitchIncomeIds: settings.autoSwitchIncomeIds,
+            manualOverrideYears: manualOverrideYears
+          };
+        }
+        return i;
+      })
+    });
+
+    setCorporateSalaryModalOpen(false);
+    syncCashFlowFromFormData();
   };
 
   // 自動入力モーダルを開く
@@ -442,9 +827,20 @@ export function IncomeForm() {
       newOriginalAmounts[year] = amount;
       
       // 給与収入で会社員または厚生年金ありのパートの場合は手取り計算
-      if (currentSection === 'personal' && isNetIncomeTarget(item.name)) {
-        const occupation = item.name === '給与収入' ? basicInfo.occupation : basicInfo.spouseInfo?.occupation;
-        const netResult = calculateNetIncome(amount, occupation);
+      if (currentSection === 'personal' && isNetIncomeTarget(item.name, item)) {
+        let netResult;
+        
+        if (item.isCorporateSalary) {
+          // 法人給与の場合
+          const hasSocialInsurance = item.corporateSalaryType === 'full-time' && 
+                                    (item.socialInsuranceByYear?.[year] ?? true);
+          netResult = calculateNetIncomeForDirector(amount, hasSocialInsurance);
+        } else {
+          // 通常の給与収入の場合
+          const occupation = item.name === '給与収入' ? basicInfo.occupation : basicInfo.spouseInfo?.occupation;
+          netResult = calculateNetIncome(amount, occupation);
+        }
+        
         newAmounts[year] = netResult.netIncome;
       } else {
         newAmounts[year] = amount;
@@ -459,7 +855,7 @@ export function IncomeForm() {
           return {
             ...i,
             amounts: {...i.amounts, ...newAmounts},
-            _originalAmounts: currentSection === 'personal' && isNetIncomeTarget(i.name) 
+            _originalAmounts: currentSection === 'personal' && isNetIncomeTarget(i.name, i) 
               ? {...(i._originalAmounts || {}), ...newOriginalAmounts}
               : undefined
           };
@@ -535,45 +931,107 @@ export function IncomeForm() {
     if (!item) return;
 
     // 給与収入で会社員または厚生年金ありのパートの場合は手取り計算
-    if (section === 'personal' && isNetIncomeTarget(item.name)) {
-      const occupation = item.name === '給与収入' ? basicInfo.occupation : basicInfo.spouseInfo?.occupation;
-      const netResult = calculateNetIncome(amount, occupation);
+    if (section === 'personal' && isNetIncomeTarget(item.name, item)) {
+      let netResult;
       
-      setIncomeData({
-        ...incomeData,
-        [section]: incomeData[section].map(i =>
-          i.id === id 
-            ? { 
-                ...i, 
-                amounts: { ...i.amounts, [year]: netResult.netIncome },
-                _originalAmounts: { ...(i._originalAmounts || {}), [year]: amount }
-              }
-            : i
-        )
-      });
+      if (item.isCorporateSalary) {
+        // 法人給与の場合
+        const hasSocialInsurance = item.corporateSalaryType === 'full-time' && 
+                                  (item.socialInsuranceByYear?.[year] ?? true);
+        netResult = calculateNetIncomeForDirector(amount, hasSocialInsurance);
+        
+        // 手動変更フラグは社保設定を手動で変更した場合のみ立てる
+        // 金額入力だけでは手動フラグを立てない
+        setIncomeData({
+          ...incomeData,
+          [section]: incomeData[section].map(i =>
+            i.id === id 
+              ? { 
+                  ...i, 
+                  amounts: { ...i.amounts, [year]: netResult.netIncome },
+                  _originalAmounts: { ...(i._originalAmounts || {}), [year]: amount }
+                }
+              : i
+          )
+        });
+      } else {
+        // 通常の給与収入の場合
+        const occupation = item.name === '給与収入' ? basicInfo.occupation : basicInfo.spouseInfo?.occupation;
+        netResult = calculateNetIncome(amount, occupation);
+        
+        setIncomeData({
+          ...incomeData,
+          [section]: incomeData[section].map(i =>
+            i.id === id 
+              ? { 
+                  ...i, 
+                  amounts: { ...i.amounts, [year]: netResult.netIncome },
+                  _originalAmounts: { ...(i._originalAmounts || {}), [year]: amount }
+                }
+              : i
+          )
+        });
+      }
     }
     
     syncCashFlowFromFormData();
   };
 
   const handleCategoryChange = (section: 'personal' | 'corporate', id: string, value: string) => {
-    setIncomeData({
-      ...incomeData,
-      [section]: incomeData[section].map(item =>
-        item.id === id
-          ? {
-              ...item,
-              category: value,
-            }
-          : item
-      ),
-    });
+    // カテゴリーが法人給与に変更された場合、フラグだけ立てる（モーダルは開かない）
+    if (value === 'corporate_salary') {
+      // デフォルト設定で法人給与フラグを立てる
+      setIncomeData({
+        ...incomeData,
+        [section]: incomeData[section].map(item =>
+          item.id === id
+            ? {
+                ...item,
+                category: value,
+                isCorporateSalary: true,
+                corporateSalaryType: 'full-time', // デフォルトは専業
+                socialInsuranceByYear: years.reduce((acc, year) => {
+                  acc[year] = true;
+                  return acc;
+                }, {} as { [year: number]: boolean }),
+                autoSwitchEnabled: false,
+                autoSwitchIncomeIds: [],
+                manualOverrideYears: {}
+              }
+            : item
+        ),
+      });
+    } else {
+      // 法人給与以外が選択された場合はフラグをクリア
+      setIncomeData({
+        ...incomeData,
+        [section]: incomeData[section].map(item =>
+          item.id === id
+            ? {
+                ...item,
+                category: value,
+                isCorporateSalary: false,
+                corporateSalaryType: undefined,
+                socialInsuranceByYear: undefined,
+                autoSwitchEnabled: undefined,
+                autoSwitchIncomeIds: undefined,
+                manualOverrideYears: undefined,
+              }
+            : item
+        ),
+      });
+    }
     syncCashFlowFromFormData();
   };
 
   const renderIncomeTable = (section: 'personal' | 'corporate') => {
     const items = incomeData[section];
     const title = section === 'personal' ? '個人' : '法人';
+    
+    // 個人の場合は法人給与カテゴリーを追加
+    const categories = section === 'personal' 
+      ? [...INCOME_CATEGORIES, { value: 'corporate_salary', label: '法人給与' }]
+      : INCOME_CATEGORIES;
 
     return (
       <div className="space-y-4">
@@ -609,6 +1067,17 @@ export function IncomeForm() {
                     </TermTooltip>
                   </div>
                 </th>
+                {/* 法人給与設定列（個人のみ） */}
+                {section === 'personal' && (
+                  <th className="px-4 py-2 text-center text-sm font-medium text-gray-500 w-[80px] min-w-[80px]">
+                    <div className="flex items-center justify-center">
+                      <span>法人設定</span>
+                      <TermTooltip term="" width="narrow">
+                        法人給与の場合、専業/副業の選択と年度ごとの社保設定ができます。副業の場合は自動切り替え機能も利用可能です。
+                      </TermTooltip>
+                    </div>
+                  </th>
+                )}
                 {years.map(year => (
                   <th key={year} className="px-4 py-2 text-right text-sm font-medium text-gray-500 min-w-[95px]">
                     {year}年
@@ -634,7 +1103,7 @@ export function IncomeForm() {
                     <CategorySelect
                       value={item.category || 'other'}
                       onChange={(value) => handleCategoryChange(section, item.id, value)}
-                      categories={INCOME_CATEGORIES}
+                      categories={categories}
                     />
                   </td>
                   {/* 自動入力ボタン列 */}
@@ -648,6 +1117,23 @@ export function IncomeForm() {
                       <span>設定</span>
                     </button>
                   </td>
+                  {/* 法人給与設定ボタン（個人のみ） */}
+                  {section === 'personal' && (
+                    <td className="px-4 py-2 text-center">
+                      {item.isCorporateSalary ? (
+                        <button
+                          type="button"
+                          onClick={() => openCorporateSalaryModal(item.id)}
+                          className="inline-flex items-center px-2 py-1 text-xs bg-blue-100 text-blue-800 rounded hover:bg-blue-200"
+                        >
+                          <Building2 className="h-3 w-3 mr-1" />
+                          <span>{item.corporateSalaryType === 'full-time' ? '専業' : '副業'}</span>
+                        </button>
+                      ) : (
+                        <span className="text-xs text-gray-400">-</span>
+                      )}
+                    </td>
+                  )}
                   {years.map(year => (
                     <td key={year} className="px-4 py-2">
                       <div className="relative">
@@ -656,13 +1142,32 @@ export function IncomeForm() {
                           value={item.amounts[year] || ''}
                           onChange={(e) => handleAmountChange(section, item.id, year, Number(e.target.value))}
                           onBlur={(e) => handleAmountBlur(section, item.id, year, Number(e.target.value))}
-                          className="w-full text-right rounded-md border border-gray-200 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                          className={`w-full text-right rounded-md border text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
+                            item.isCorporateSalary && item.linkedExpenseId 
+                              ? 'border-blue-300 bg-blue-50' 
+                              : 'border-gray-200'
+                          }`}
                           placeholder="0"
                         />
                         {/* 手取り計算対象の場合は額面を表示 */}
-                        {section === 'personal' && isNetIncomeTarget(item.name) && item._originalAmounts && item._originalAmounts[year] && (
+                        {section === 'personal' && isNetIncomeTarget(item.name, item) && item._originalAmounts && item._originalAmounts[year] && (
                           <div className="text-xs text-gray-500 mt-1">
                             額面: {item._originalAmounts[year]}万円
+                            {item.isCorporateSalary && (
+                              <div className="text-xs text-blue-600">
+                                {item.corporateSalaryType === 'full-time' 
+                                  ? '専業・社保あり'
+                                  : item.socialInsuranceByYear?.[year] 
+                                    ? '副業・社保あり' 
+                                    : '副業・社保なし'}
+                                {item.autoSwitchEnabled && item.manualOverrideYears?.[year] && (
+                                  <span className="text-orange-600 ml-1">(手動)</span>
+                                )}
+                                {item.autoSwitchEnabled && !item.manualOverrideYears?.[year] && item.corporateSalaryType === 'part-time' && (
+                                  <span className="text-green-600 ml-1">(自動)</span>
+                                )}
+                              </div>
+                            )}
                           </div>
                         )}
                       </div>
@@ -703,6 +1208,24 @@ export function IncomeForm() {
           年金収入は、基本情報で設定した職業・年金受給開始年齢などに基づいて自動計算されます。
           投資設定は資産ページの「収入投資」で行えます。
         </p>
+      </div>
+
+      {/* 法人給与機能の説明セクション */}
+      <div className="bg-indigo-50 p-4 rounded-md">
+        <h3 className="text-md font-medium text-indigo-800 mb-2 flex items-center">
+          <Building2 className="h-5 w-5 mr-2" />
+          法人給与機能について
+        </h3>
+        <p className="text-sm text-indigo-700 mb-2">
+          個人収入でカテゴリ「法人給与」を選択すると、自身の法人から受け取る役員報酬として設定できます。
+        </p>
+        <ul className="text-sm text-indigo-700 list-disc pl-5 space-y-1">
+          <li><strong>専業（役員）：</strong>社会保険加入。法人側に社保込みの従業員給与が自動計上</li>
+          <li><strong>副業（業務委託等）：</strong>社会保険なし。法人側に給与のみが自動計上</li>
+          <li>年度ごとに社保の有無を設定可能（副業から本業への移行に対応）</li>
+          <li>役員は雇用保険対象外のため、雇用保険料は計算されません</li>
+          <li><strong>自動切り替え機能：</strong>副業選択時、法人給与が指定した収入を上回ると自動で社保ありに切り替え</li>
+        </ul>
       </div>
 
       {/* 自動入力機能の説明セクション */}
@@ -787,7 +1310,31 @@ export function IncomeForm() {
         currentAge={basicInfo.currentAge}
         isGivenSalary={
           incomeData[currentSection].find(i => i.id === currentItemId)?.name === '給与収入' ||
-          incomeData[currentSection].find(i => i.id === currentItemId)?.name === '配偶者収入'
+          incomeData[currentSection].find(i => i.id === currentItemId)?.name === '配偶者収入' ||
+          incomeData[currentSection].find(i => i.id === currentItemId)?.isCorporateSalary
+        }
+      />
+
+      {/* 法人給与設定モーダル */}
+      <CorporateSalaryModal
+        isOpen={corporateSalaryModalOpen}
+        onClose={() => setCorporateSalaryModalOpen(false)}
+        onApply={applyCorporateSalarySettings}
+        years={years}
+        currentSettings={(() => {
+          const item = incomeData[currentSection].find(i => i.id === currentItemId);
+          if (item?.isCorporateSalary) {
+            return {
+              corporateSalaryType: item.corporateSalaryType || 'full-time',
+              socialInsuranceByYear: item.socialInsuranceByYear || {},
+              autoSwitchEnabled: item.autoSwitchEnabled || false,
+              autoSwitchIncomeIds: item.autoSwitchIncomeIds || []
+            };
+          }
+          return undefined;
+        })()}
+        itemName={
+          incomeData[currentSection].find(i => i.id === currentItemId)?.name || '法人給与'
         }
       />
 

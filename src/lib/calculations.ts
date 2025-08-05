@@ -472,6 +472,87 @@ export function calculateNetIncome(
   };
 }
 
+// === 法人給与関連の新規関数 ===
+
+// 役員報酬用の手取り計算（雇用保険を除外）
+export function calculateNetIncomeForDirector(
+  annualIncome: number, // in 万円
+  hasSocialInsurance: boolean
+): { 
+  netIncome: number;
+  deductions: {
+    salaryDeduction: number;
+    socialInsurance: number;
+    incomeTax: number;
+    residentTax: number;
+    total: number;
+  };
+} {
+  // 給与所得控除 (in 万円)
+  const salaryDeduction = calculateSalaryDeduction(annualIncome);
+
+  // 社会保険料（雇用保険を除いた率で計算）
+  let socialInsurance = 0;
+  if (hasSocialInsurance) {
+    // 役員の場合、雇用保険を除いた社会保険料率を適用
+    // 通常の15%から雇用保険分(約0.6%)を引いて14.4%とする
+    const directorSocialInsuranceRate = annualIncome < 850 ? 0.144 : 0.077;
+    socialInsurance = Math.floor(annualIncome * directorSocialInsuranceRate);
+  }
+
+  // 課税所得 (in 万円)
+  const taxableIncome = Math.max(0, annualIncome - (salaryDeduction + socialInsurance));
+
+  // 所得税 (in 万円)
+  const incomeTax = calculateIncomeTax(taxableIncome);
+
+  // 住民税（課税所得の10%）
+  const residentTax = Math.floor(taxableIncome * 0.10);
+
+  // 総控除額 (in 万円)
+  const totalDeductions = socialInsurance + incomeTax + residentTax;
+
+  // 手取り収入 (in 万円)
+  const netIncome = annualIncome - totalDeductions;
+
+  return {
+    netIncome,
+    deductions: {
+      salaryDeduction,
+      socialInsurance,
+      incomeTax,
+      residentTax,
+      total: totalDeductions
+    }
+  };
+}
+
+// 法人側の従業員給与コスト計算
+export function calculateCorporateEmployeeCost(
+  annualSalary: number, // in 万円（額面給与）
+  hasSocialInsurance: boolean
+): number {
+  let totalCost = annualSalary;
+  
+  if (hasSocialInsurance) {
+    // 法人負担の社会保険料を計算
+    // 健康保険料 + 厚生年金保険料の法人負担分（労使折半）
+    const corporateSocialInsuranceRate = annualSalary < 850 ? 0.144 : 0.077;
+    const corporateSocialInsurance = Math.floor(annualSalary * corporateSocialInsuranceRate);
+    
+    // 子ども・子育て拠出金（全額法人負担、0.36%）
+    const childCareContribution = Math.floor(annualSalary * 0.0036);
+    
+    // 労災保険料（業種により異なるが、一般的な事務業で0.3%程度）
+    const workAccidentInsurance = Math.floor(annualSalary * 0.003);
+    
+    // 法人の総負担額
+    totalCost = annualSalary + corporateSocialInsurance + childCareContribution + workAccidentInsurance;
+  }
+  
+  return Math.round(totalCost * 10) / 10;
+}
+
 export function calculateNetIncomeWithRaise(
   baseAnnualIncome: number, // in 万円
   occupation: string,

@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { calculateNetIncome, calculateHousingExpense, calculateCorporateTax, CorporateTaxSettings, DEFAULT_CORPORATE_TAX_SETTINGS } from '@/lib/calculations';
+import { calculateNetIncome, calculateHousingExpense, calculateCorporateTax, CorporateTaxSettings, DEFAULT_CORPORATE_TAX_SETTINGS, calculateNetIncomeForDirector, calculateCorporateEmployeeCost } from '@/lib/calculations';
 import { 
   calculatePensionForYear, 
   calculateSpousePensionForYear 
@@ -22,6 +22,15 @@ export interface IncomeItem {
   maxInvestmentAmount: number;
   // 自動計算フラグ
   isAutoCalculated?: boolean;
+  // 法人給与関連の新規プロパティ
+  isCorporateSalary?: boolean;  // 法人給与フラグ
+  corporateSalaryType?: 'full-time' | 'part-time';  // 専業/副業
+  socialInsuranceByYear?: { [year: number]: boolean };  // 年度ごとの社保有無
+  linkedExpenseId?: string;  // 連携先の法人経費ID
+  // 自動切り替え用の新規プロパティ
+  autoSwitchIncomeIds?: string[];  // 監視対象の収入項目IDリスト
+  autoSwitchEnabled?: boolean;  // 自動切り替え機能の有効/無効
+  manualOverrideYears?: { [year: number]: boolean };  // 手動で設定された年度（自動切り替えをスキップ）
 }
 
 export interface IncomeSection {
@@ -44,6 +53,9 @@ export interface ExpenseItem {
     costIncreaseRate: number; // 原価上昇率（%）
     maxCostAmount?: number; // 原価上限値（万円）
   };
+  // 法人給与連携フラグ
+  isLinkedFromIncome?: boolean;  // 収入から自動連携されたフラグ
+  linkedIncomeId?: string;  // 連携元の収入ID
 }
 
 export interface ExpenseSection {
@@ -539,8 +551,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
     }));
     get().initializeCashFlow();
   },
-
-  // **完全修正版: syncCashFlowFromFormData - 収入投資機能対応**
+  // **完全修正版: syncCashFlowFromFormData - 法人給与連携機能追加**
   syncCashFlowFromFormData: () => {
     try {
       const state = get();
@@ -556,6 +567,105 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
       // 資産と負債のデータをディープコピーして作業用として使用
       const workingAssetData = JSON.parse(JSON.stringify(assetData));
       const workingLiabilityData = JSON.parse(JSON.stringify(liabilityData));
+      const workingExpenseData = JSON.parse(JSON.stringify(expenseData));
+      
+      // 法人給与から法人経費への連携処理
+      incomeData.personal.forEach((incomeItem) => {
+        if (incomeItem.isCorporateSalary && incomeItem.corporateSalaryType) {
+          // 既存の連携済み経費を探す、なければ新規作成
+          let linkedExpenseItem = workingExpenseData.corporate.find(
+            (expense: ExpenseItem) => expense.linkedIncomeId === incomeItem.id
+          );
+          
+          if (!linkedExpenseItem) {
+            // 新規作成
+            linkedExpenseItem = {
+              id: `linked_expense_${incomeItem.id}`,
+              name: `従業員給与（${incomeItem.name}）`,
+              type: 'other' as const,
+              category: 'employee_salary',
+              amounts: {},
+              _rawAmounts: {},
+              isLinkedFromIncome: true,
+              linkedIncomeId: incomeItem.id
+            };
+            workingExpenseData.corporate.push(linkedExpenseItem);
+          }
+          
+          // 各年の法人経費を計算
+          years.forEach(year => {
+            const salaryAmount = incomeItem._originalAmounts?.[year] || incomeItem.amounts[year] || 0;
+            
+            if (salaryAmount > 0) {
+              // 社保設定の判定
+              let hasSocialInsurance = false;
+              
+              if (incomeItem.corporateSalaryType === 'full-time') {
+                // 専業の場合は常に社保あり（設定値がある場合はそれを使用）
+                hasSocialInsurance = incomeItem.socialInsuranceByYear?.[year] ?? true;
+              } else if (incomeItem.corporateSalaryType === 'part-time') {
+                // 副業の場合
+                if (incomeItem.autoSwitchEnabled && 
+                    incomeItem.autoSwitchIncomeIds && 
+                    incomeItem.autoSwitchIncomeIds.length > 0 &&
+                    !incomeItem.manualOverrideYears?.[year]) {
+                  // 自動切り替えが有効かつ手動設定されていない場合
+                  
+                  // 監視対象収入の合計を計算（額面で比較）
+                  let targetIncomeTotal = 0;
+                  incomeItem.autoSwitchIncomeIds.forEach(targetId => {
+                    const targetIncome = incomeData.personal.find(item => item.id === targetId);
+                    if (targetIncome) {
+                      // 額面があれば額面を、なければ手取りを使用
+                      const targetAmount = targetIncome._originalAmounts?.[year] || targetIncome.amounts[year] || 0;
+                      targetIncomeTotal += targetAmount;
+                    }
+                  });
+                  
+                  // デバッグ用ログ
+                  console.log(`自動切り替え判定 ${year}年:`, {
+                    法人給与額面: salaryAmount,
+                    監視対象収入合計: targetIncomeTotal,
+                    判定結果: salaryAmount > targetIncomeTotal ? '社保あり' : '社保なし'
+                  });
+                  
+                  // 法人給与が監視対象収入を上回った場合、社保を自動でオンにする
+                  if (salaryAmount > targetIncomeTotal) {
+                    hasSocialInsurance = true;
+                    // socialInsuranceByYearも更新
+                    if (!incomeItem.socialInsuranceByYear) {
+                      incomeItem.socialInsuranceByYear = {};
+                    }
+                    incomeItem.socialInsuranceByYear[year] = true;
+                  } else {
+                    // 上回らない場合は設定値を使用（デフォルトはfalse）
+                    hasSocialInsurance = false;
+                    if (!incomeItem.socialInsuranceByYear) {
+                      incomeItem.socialInsuranceByYear = {};
+                    }
+                    incomeItem.socialInsuranceByYear[year] = false;
+                  }
+                } else {
+                  // 自動切り替えが無効または手動設定済みの場合は設定値を使用
+                  hasSocialInsurance = incomeItem.socialInsuranceByYear?.[year] ?? false;
+                }
+              }
+              
+              // 法人側の従業員給与費用を計算
+              const employeeCost = calculateCorporateEmployeeCost(salaryAmount, hasSocialInsurance);
+              
+              linkedExpenseItem.amounts[year] = employeeCost;
+              linkedExpenseItem._rawAmounts![year] = employeeCost;
+            } else {
+              linkedExpenseItem.amounts[year] = 0;
+              linkedExpenseItem._rawAmounts![year] = 0;
+            }
+          });
+          
+          // linkedExpenseIdを収入側に保存
+          incomeItem.linkedExpenseId = linkedExpenseItem.id;
+        }
+      });
       
       // 負債の返済スケジュールを計算
       const calculateLoanRepayments = (section: 'personal' | 'corporate') => {
@@ -656,7 +766,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
       }
 
       years.forEach((year, yearIndex) => {
-        // === 1. 収入計算 ===
+        // === 1. 収入計算（法人給与の手取り計算も含む） ===
         let mainIncome = 0;
         let sideIncome = 0;
         let otherSideIncome = 0;
@@ -668,7 +778,28 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
 
         // 各収入項目を処理
         incomeData.personal.forEach((income: any) => {
-          const amount = income.amounts[year] || 0;
+          let amount = income.amounts[year] || 0;
+          
+          // 法人給与の場合は特別な手取り計算を適用
+          if (income.isCorporateSalary && income._originalAmounts?.[year]) {
+            let hasSocialInsurance = false;
+            
+            if (income.corporateSalaryType === 'full-time') {
+              // 専業の場合
+              hasSocialInsurance = income.socialInsuranceByYear?.[year] ?? true;
+            } else if (income.corporateSalaryType === 'part-time') {
+              // 副業の場合は設定値を使用（自動切り替えの結果は既に反映済み）
+              hasSocialInsurance = income.socialInsuranceByYear?.[year] ?? false;
+            }
+            
+            const netResult = calculateNetIncomeForDirector(
+              income._originalAmounts[year], 
+              hasSocialInsurance
+            );
+            amount = netResult.netIncome;
+            income.amounts[year] = amount; // 手取り額を更新
+          }
+          
           if (income.name === '給与収入') {
             mainIncome += amount;
           } else if (income.name === '副業収入') {
@@ -833,7 +964,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
           });
         }
 
-        // === 4. 支出計算（法人原価追加）===
+        // === 4. 支出計算（法人原価追加、連携された従業員給与を含む）===
         let livingExpense = 0;
         let housingExpense = 0;
         let educationExpense = 0;
@@ -842,7 +973,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
         let corporateOtherExpense = 0;
         let corporateCost = 0; // 法人原価を追加
 
-        expenseData.personal.forEach((expense: any) => {
+        workingExpenseData.personal.forEach((expense: any) => {
           const amount = expense.amounts[year] || 0;
           if (expense.name === '生活費') {
             livingExpense += amount;
@@ -855,7 +986,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
           }
         });
 
-        expenseData.corporate.forEach((expense: any) => {
+        workingExpenseData.corporate.forEach((expense: any) => {
           // 法人原価の場合は自動計算
           if (expense.category === 'cost' && expense._costSettings) {
             const costSettings = expense._costSettings;
@@ -1054,6 +1185,8 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
         };
       });
 
+      // 更新された経費データを保存
+      set({ expenseData: workingExpenseData });
       set({ cashFlow: newCashFlow });
     } catch (error) {
       console.error("Error in syncCashFlowFromFormData:", error);
@@ -1187,7 +1320,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
         Object.keys(item.amounts || {}).length > 0 || 
         Object.keys(item._rawAmounts || {}).length > 0
       );
-      if (hasIncomeData || hasExpenseData) {
+     if (hasIncomeData || hasExpenseData) {
         console.log('既存データが検出されたため、初期化をスキップします');
         return;
       }

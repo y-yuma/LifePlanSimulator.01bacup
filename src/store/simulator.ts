@@ -295,6 +295,67 @@ interface SimulatorState {
   updateCorporateTaxSettings: (settings: Partial<CorporateTaxSettings>) => void;
 }
 
+// ★新機能：投資額を除いた仮収支を計算するヘルパー関数★
+function calculateTentativeBalance(
+  section: 'personal' | 'corporate',
+  data: {
+    // 個人収入データ
+    mainIncome: number;
+    sideIncome: number;
+    otherSideIncome: number;
+    spouseIncome: number;
+    pensionIncome: number;
+    spousePensionIncome: number;
+    personalInvestmentIncome: number;
+    personalLifeEventIncome: number;
+    // 個人支出データ  
+    livingExpense: number;
+    housingExpense: number;
+    educationExpense: number;
+    otherPersonalExpense: number;
+    personalLifeEventExpense: number;
+    personalLoanRepayment: number;
+    // 法人収入データ
+    corporateIncome: number;
+    corporateOtherIncome: number;
+    corporateInvestmentIncome: number;
+    corporateLifeEventIncome: number;
+    // 法人支出データ
+    corporateExpense: number;
+    corporateOtherExpense: number;
+    corporateCost: number;
+    corporateLifeEventExpense: number;
+    corporateLoanRepayment: number;
+    // 税金計算用
+    parameters: Parameters;
+  }
+): number {
+  if (section === 'personal') {
+    // 個人の仮収支 = 収入 - 支出（投資額除く）
+    const totalIncome = data.mainIncome + data.sideIncome + data.otherSideIncome + 
+                       data.spouseIncome + data.pensionIncome + data.spousePensionIncome + 
+                       data.personalInvestmentIncome + data.personalLifeEventIncome;
+    
+    const totalExpense = data.livingExpense + data.housingExpense + data.educationExpense + 
+                        data.otherPersonalExpense + data.personalLifeEventExpense + 
+                        data.personalLoanRepayment;
+    
+    return totalIncome - totalExpense;
+  } else {
+    // 法人の仮収支 = 収入 - 支出（投資額除く） - 税金
+    const totalIncome = data.corporateIncome + data.corporateOtherIncome + 
+                       data.corporateInvestmentIncome + data.corporateLifeEventIncome;
+    
+    const totalExpense = data.corporateExpense + data.corporateOtherExpense + data.corporateCost + 
+                        data.corporateLifeEventExpense + data.corporateLoanRepayment;
+    
+    const pretaxProfit = totalIncome - totalExpense;
+    const taxResult = calculateCorporateTax(pretaxProfit, data.parameters.corporateTaxSettings);
+    
+    return taxResult.aftertaxProfit; // 税引き後利益
+  }
+}
+
 // 教育費計算関数（元のファイルから抽出）
 function calculateEducationExpense(
   children: BasicInfo['children'],
@@ -396,7 +457,6 @@ function calculateEducationExpense(
 
   return Number((existingChildrenExpense + plannedChildrenExpense).toFixed(1));
 }
-
 export const useSimulatorStore = create<SimulatorState>((set, get) => ({
   currentStep: 0,
   basicInfo: {
@@ -824,69 +884,9 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
           }
         });
 
-        // === 2. 収入投資の計算（修正版）===
-        let personalInvestmentAmount = 0;
-        let corporateInvestmentAmount = 0;
+        // === 2. 運用収益計算（資産ページの資産を含む）===
         let personalInvestmentIncome = 0;  // 運用収益の変数を先に宣言
         let corporateInvestmentIncome = 0;  // 運用収益の変数を先に宣言
-
-        // 収入投資の処理（修正版 - 運用収益をキャッシュフローに加算）
-        ['personal', 'corporate'].forEach((section) => {
-          workingAssetData[section].forEach((asset: any) => {
-            if (asset.type === 'income_investment' && asset.linkedIncomeId) {
-              // 前年の残高を取得（貯金箱の中身を確認）
-              const previousBalance = yearIndex > 0 ? (asset.amounts[year - 1] || 0) : 0;
-              
-              // 運用収益を計算（2年目以降）
-              let assetInvestmentIncome = 0;
-              if (yearIndex > 0 && previousBalance > 0) {
-                const returnRate = asset.investmentReturn || 0;
-                assetInvestmentIncome = previousBalance * (returnRate / 100);
-                
-                // ★運用収益をキャッシュフローに加算★
-                if (section === 'personal') {
-                  personalInvestmentIncome += assetInvestmentIncome;
-                } else {
-                  corporateInvestmentIncome += assetInvestmentIncome;
-                }
-              }
-              
-              // 紐付けられた収入を取得
-              const linkedIncomeType = asset.linkedIncomeType || section;
-              const linkedIncome = incomeData[linkedIncomeType].find(
-                (income: any) => income.id === asset.linkedIncomeId
-              );
-              
-              if (linkedIncome) {
-                const incomeAmount = linkedIncome.amounts[year] || 0;
-                const investmentRatio = asset.investmentRatio || 0;
-                const maxInvestmentAmount = asset.maxInvestmentAmount || Infinity;
-                
-                // 今年の新規投資額を計算
-                const newInvestmentAmount = Math.min(
-                  incomeAmount * (investmentRatio / 100),
-                  maxInvestmentAmount
-                );
-                
-                // 投資額を集計（キャッシュフロー表示用）
-                if (section === 'personal') {
-                  personalInvestmentAmount += newInvestmentAmount;
-                } else {
-                  corporateInvestmentAmount += newInvestmentAmount;
-                }
-                
-                // 累積計算：前年残高 + 運用収益 + 当年新規投資
-                asset.amounts[year] = previousBalance + assetInvestmentIncome + newInvestmentAmount;
-              } else {
-                // 収入が紐付けられていない場合でも、前年残高と運用収益は計算
-                asset.amounts[year] = previousBalance + assetInvestmentIncome;
-              }
-            }
-          });
-        });
-
-        // === 3. 運用収益計算（資産ページの資産を含む）===
-        // personalInvestmentIncomeとcorporateInvestmentIncomeは既に上で宣言済み
 
         if (yearIndex > 0) { // 初年度は運用収益なし
           // 資産ページの個別運用利回りを適用し、資産額を更新
@@ -917,7 +917,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
                 asset.amounts[year] = asset.amounts[year - 1] || 0;
               }
             }
-            // 収入投資の運用収益は既に計算済みなのでスキップ
+            // 収入投資の運用収益は別途計算
           });
 
           workingAssetData.corporate.forEach((asset: any) => {
@@ -947,7 +947,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
                 asset.amounts[year] = asset.amounts[year - 1] || 0;
               }
             }
-            // 収入投資の運用収益は既に計算済みなのでスキップ
+            // 収入投資の運用収益は別途計算
           });
         } else {
           // 初年度は資産額をそのまま設定（収入投資以外）
@@ -964,7 +964,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
           });
         }
 
-        // === 4. 支出計算（法人原価追加、連携された従業員給与を含む）===
+        // === 3. 支出計算（法人原価追加、連携された従業員給与を含む）===
         let livingExpense = 0;
         let housingExpense = 0;
         let educationExpense = 0;
@@ -1023,15 +1023,11 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
           }
         });
 
-        // === 5. ライフイベント計算 ===
+        // === 4. ライフイベント計算 ===
         let personalLifeEventIncome = 0;
         let personalLifeEventExpense = 0;
         let corporateLifeEventIncome = 0;
         let corporateLifeEventExpense = 0;
-        let personalInvestmentLifeEventIncome = 0;
-        let personalInvestmentLifeEventExpense = 0;
-        let corporateInvestmentLifeEventIncome = 0;
-        let corporateInvestmentLifeEventExpense = 0;
 
         lifeEvents.filter(event => event.year === year).forEach(event => {
           if (event.source === 'personal') {
@@ -1046,24 +1042,96 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
             } else {
               corporateLifeEventExpense += event.amount;
             }
-          } else if (event.source === 'personal_investment') {
-            if (event.type === 'income') {
-              personalInvestmentLifeEventIncome += event.amount;
-            } else {
-              personalInvestmentLifeEventExpense += event.amount;
-            }
-          } else if (event.source === 'corporate_investment') {
-            if (event.type === 'income') {
-              corporateInvestmentLifeEventIncome += event.amount;
-            } else {
-              corporateInvestmentLifeEventExpense += event.amount;
-            }
           }
         });
 
-        // === 6. ローン返済額取得 ===
+        // === 5. ローン返済額取得 ===
         const personalLoanRepayment = personalLoanRepayments[year] || 0;
         const corporateLoanRepayment = corporateLoanRepayments[year] || 0;
+
+        // === 6. ★修正：収入投資の計算（収支マイナス時投資停止機能付き）===
+        let personalInvestmentAmount = 0;
+        let corporateInvestmentAmount = 0;
+
+        // 収入投資の処理（修正版 - 運用収益をキャッシュフローに加算 & 収支チェック付き）
+        ['personal', 'corporate'].forEach((section) => {
+          workingAssetData[section].forEach((asset: any) => {
+            if (asset.type === 'income_investment' && asset.linkedIncomeId) {
+              // 前年の残高を取得（貯金箱の中身を確認）
+              const previousBalance = yearIndex > 0 ? (asset.amounts[year - 1] || 0) : 0;
+              
+              // 運用収益を計算（2年目以降）
+              let assetInvestmentIncome = 0;
+              if (yearIndex > 0 && previousBalance > 0) {
+                const returnRate = asset.investmentReturn || 0;
+                assetInvestmentIncome = previousBalance * (returnRate / 100);
+                
+                // ★運用収益をキャッシュフローに加算★
+                if (section === 'personal') {
+                  personalInvestmentIncome += assetInvestmentIncome;
+                } else {
+                  corporateInvestmentIncome += assetInvestmentIncome;
+                }
+              }
+              
+              // 紐付けられた収入を取得
+              const linkedIncomeType = asset.linkedIncomeType || section;
+              const linkedIncome = incomeData[linkedIncomeType].find(
+                (income: any) => income.id === asset.linkedIncomeId
+              );
+              
+              if (linkedIncome) {
+                const incomeAmount = linkedIncome.amounts[year] || 0;
+                const investmentRatio = asset.investmentRatio || 0;
+                const maxInvestmentAmount = asset.maxInvestmentAmount || Infinity;
+                
+                // ★新機能：収支マイナス時は投資停止★
+                let newInvestmentAmount = 0;
+
+                // 投資額を除いた仮収支を計算
+                const tentativeBalance = calculateTentativeBalance(
+                  section, 
+                  {
+                    // 個人収入データ
+                    mainIncome, sideIncome, otherSideIncome, spouseIncome,
+                    pensionIncome, spousePensionIncome, personalInvestmentIncome, personalLifeEventIncome,
+                    // 個人支出データ  
+                    livingExpense, housingExpense, educationExpense, otherPersonalExpense,
+                    personalLifeEventExpense, personalLoanRepayment,
+                    // 法人収入データ
+                    corporateIncome, corporateOtherIncome, corporateInvestmentIncome, corporateLifeEventIncome,
+                    // 法人支出データ
+                    corporateExpense, corporateOtherExpense, corporateCost,
+                    corporateLifeEventExpense, corporateLoanRepayment,
+                    // 税金計算用
+                    parameters
+                  }
+                );
+
+                // 仮収支がプラスの場合のみ投資を実行
+                if (tentativeBalance > 0) {
+                  newInvestmentAmount = Math.min(
+                    incomeAmount * (investmentRatio / 100),
+                    maxInvestmentAmount
+                  );
+                }
+                
+                // 投資額を集計（キャッシュフロー表示用）
+                if (section === 'personal') {
+                  personalInvestmentAmount += newInvestmentAmount;
+                } else {
+                  corporateInvestmentAmount += newInvestmentAmount;
+                }
+                
+                // 累積計算：前年残高 + 運用収益 + 当年新規投資
+                asset.amounts[year] = previousBalance + assetInvestmentIncome + newInvestmentAmount;
+              } else {
+                // 収入が紐付けられていない場合でも、前年残高と運用収益は計算
+                asset.amounts[year] = previousBalance + assetInvestmentIncome;
+              }
+            }
+          });
+        });
 
         // === 7. 負債総額計算 ===
         let personalLiabilityTotal = 0;

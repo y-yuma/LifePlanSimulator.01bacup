@@ -1,11 +1,26 @@
+// store/simulator.ts
 import { create } from 'zustand';
-import { calculateNetIncome, calculateHousingExpense, calculateCorporateTax, CorporateTaxSettings, DEFAULT_CORPORATE_TAX_SETTINGS, calculateNetIncomeForDirector, calculateCorporateEmployeeCost } from '@/lib/calculations';
-import { 
-  calculatePensionForYear, 
-  calculateSpousePensionForYear 
+import {
+  calculateNetIncome, // 未使用でも元のimport維持
+  calculateHousingExpense, // ※シグネチャ: (housingInfo, currentYear, startYear)
+  calculateCorporateTax,
+  CorporateTaxSettings,
+  DEFAULT_CORPORATE_TAX_SETTINGS,
+  calculateNetIncomeForDirector,
+  calculateCorporateEmployeeCost,
+  calculateMonthlyMortgage, // ローン利息対応で使用（その他ローン）
+} from '@/lib/calculations';
+import {
+  calculatePensionForYear,
+  calculateSpousePensionForYear,
 } from '@/lib/pension-calculations';
 
-type Occupation = 'company_employee' | 'part_time_with_pension' | 'part_time_without_pension' | 'self_employed' | 'homemaker';
+type Occupation =
+  | 'company_employee'
+  | 'part_time_with_pension'
+  | 'part_time_without_pension'
+  | 'self_employed'
+  | 'homemaker';
 
 export interface IncomeItem {
   id: string;
@@ -13,24 +28,18 @@ export interface IncomeItem {
   type: 'income' | 'profit' | 'side';
   category?: string;
   amounts: { [year: number]: number };
-  // 原本額面データを保存
   _originalAmounts?: { [year: number]: number };
-  // 手取り額を保存
   _netAmounts?: { [year: number]: number };
-  // 投資関連プロパティ（収入投資への移行により削除予定）
-  investmentRatio: number; 
+  investmentRatio: number;
   maxInvestmentAmount: number;
-  // 自動計算フラグ
   isAutoCalculated?: boolean;
-  // 法人給与関連の新規プロパティ
-  isCorporateSalary?: boolean;  // 法人給与フラグ
-  corporateSalaryType?: 'full-time' | 'part-time';  // 専業/副業
-  socialInsuranceByYear?: { [year: number]: boolean };  // 年度ごとの社保有無
-  linkedExpenseId?: string;  // 連携先の法人経費ID
-  // 自動切り替え用の新規プロパティ
-  autoSwitchIncomeIds?: string[];  // 監視対象の収入項目IDリスト
-  autoSwitchEnabled?: boolean;  // 自動切り替え機能の有効/無効
-  manualOverrideYears?: { [year: number]: boolean };  // 手動で設定された年度（自動切り替えをスキップ）
+  isCorporateSalary?: boolean;
+  corporateSalaryType?: 'full-time' | 'part-time';
+  socialInsuranceByYear?: { [year: number]: boolean };
+  linkedExpenseId?: string;
+  autoSwitchIncomeIds?: string[];
+  autoSwitchEnabled?: boolean;
+  manualOverrideYears?: { [year: number]: boolean };
 }
 
 export interface IncomeSection {
@@ -38,24 +47,20 @@ export interface IncomeSection {
   corporate: IncomeItem[];
 }
 
-// Expense types - 法人原価設定を追加
 export interface ExpenseItem {
   id: string;
   name: string;
   type: 'living' | 'housing' | 'education' | 'other';
   category?: string;
   amounts: { [year: number]: number };
-  // 生の入力値を保存
   _rawAmounts?: { [year: number]: number };
-  // 法人原価設定
   _costSettings?: {
-    costRatio: number; // 売上に対する原価率（%）
-    costIncreaseRate: number; // 原価上昇率（%）
-    maxCostAmount?: number; // 原価上限値（万円）
+    costRatio: number;
+    costIncreaseRate: number;
+    maxCostAmount?: number;
   };
-  // 法人給与連携フラグ
-  isLinkedFromIncome?: boolean;  // 収入から自動連携されたフラグ
-  linkedIncomeId?: string;  // 連携元の収入ID
+  isLinkedFromIncome?: boolean;
+  linkedIncomeId?: string;
 }
 
 export interface ExpenseSection {
@@ -63,7 +68,6 @@ export interface ExpenseSection {
   corporate: ExpenseItem[];
 }
 
-// Asset types - **修正**: 収入投資用のプロパティを追加
 export interface AssetItem {
   id: string;
   name: string;
@@ -72,7 +76,6 @@ export interface AssetItem {
   amounts: { [year: number]: number };
   isInvestment?: boolean;
   investmentReturn?: number;
-  // 収入投資用のフィールド
   isIncomeInvestment?: boolean;
   linkedIncomeId?: string;
   linkedIncomeType?: 'personal' | 'corporate';
@@ -85,23 +88,19 @@ export interface AssetSection {
   corporate: AssetItem[];
 }
 
-// Liability types - 修正版：計算済みフラグを追加
 export interface LiabilityItem {
   id: string;
   name: string;
   type: 'loan' | 'credit' | 'other';
   category?: string;
   amounts: { [year: number]: number };
-  interestRate?: number;
+  interestRate?: number; // 年利（%）
   termYears?: number;
   startYear?: number;
   repaymentType?: 'equal_principal' | 'equal_payment';
   autoCalculate?: boolean;
-  // 借入時の元本を記録
   originalAmount?: number;
-  // 計算済みフラグ（重複計算を防ぐ）
   _isCalculated?: boolean;
-  // 計算時のハッシュ（設定変更検知用）
   _calculationHash?: string;
 }
 
@@ -110,7 +109,6 @@ export interface LiabilitySection {
   corporate: LiabilityItem[];
 }
 
-// History types
 export interface HistoryEntry {
   timestamp: number;
   type: 'income' | 'expense' | 'asset' | 'liability';
@@ -141,7 +139,7 @@ export interface BasicInfo {
       purchaseYear: number;
       purchasePrice: number;
       loanAmount: number;
-      interestRate: number;
+      interestRate: number; // 年利（%）
       loanTermYears: number;
       maintenanceCostRate: number;
     };
@@ -152,7 +150,6 @@ export interface BasicInfo {
     marriageAge?: number;
     occupation?: Occupation;
     additionalExpense?: number;
-    // 配偶者の年金関連情報も保存
     workStartAge?: number;
     pensionStartAge?: number;
     willWorkAfterPension?: boolean;
@@ -179,21 +176,17 @@ export interface BasicInfo {
       university: string;
     };
   }[];
-  // 年金関連フィールド
   workStartAge?: number;
   pensionStartAge?: number;
   willWorkAfterPension?: boolean;
 }
 
-// **修正**: Parameters インターフェースから incomeInvestmentReturn を削除
 export interface Parameters {
   inflationRate: number;
   educationCostIncreaseRate: number;
   investmentReturn: number;
   investmentRatio?: number;
   maxInvestmentAmount?: number;
-  // **削除**: incomeInvestmentReturn
-  // **新機能**: 法人税設定
   corporateTaxSettings: CorporateTaxSettings;
 }
 
@@ -229,26 +222,29 @@ export interface CashFlowData {
     corporateInvestmentAmount: number;
     corporateInvestmentIncome: number;
     corporateTotalInvestmentAssets: number;
-    // **新機能**: 法人税関連
-    corporatePretaxProfit: number;        // 税引き前利益
-    corporateTax: number;                 // 法人税
-    localCorporateTax: number;            // 地方法人税
-    residentTaxEqual: number;             // 法人住民税（均等割）
-    residentTaxProportional: number;      // 法人住民税（法人税割）
-    corporateTotalTax: number;            // 税金合計
-    corporateAftertaxProfit: number;      // 税引き後利益
-    corporateEffectiveTaxRate: number;    // 実効税率
+    corporatePretaxProfit: number;
+    corporateTax: number;
+    localCorporateTax: number;
+    residentTaxEqual: number;
+    residentTaxProportional: number;
+    corporateTotalTax: number;
+    corporateAftertaxProfit: number;
+    corporateEffectiveTaxRate: number;
   };
 }
 
-// ライフイベントの型定義
+// ライフイベント
 export interface LifeEvent {
   year: number;
   description: string;
   type: 'income' | 'expense';
   category: string;
   amount: number;
-  source: 'personal' | 'corporate' | 'personal_investment' | 'corporate_investment';
+  source:
+    | 'personal'
+    | 'corporate'
+    | 'personal_investment'
+    | 'corporate_investment';
 }
 
 interface SimulatorState {
@@ -257,49 +253,42 @@ interface SimulatorState {
   parameters: Parameters;
   cashFlow: CashFlowData;
   history: HistoryEntry[];
-  
-  // Form data
   incomeData: IncomeSection;
   expenseData: ExpenseSection;
   assetData: AssetSection;
   liabilityData: LiabilitySection;
   lifeEvents: LifeEvent[];
-
-  // Actions
   setCurrentStep: (step: number) => void;
   setBasicInfo: (info: Partial<BasicInfo>) => void;
   setParameters: (params: Partial<Parameters>) => void;
   setCashFlow: (data: CashFlowData) => void;
-  updateCashFlowValue: (year: number, field: keyof CashFlowData[number], value: number) => void;
+  updateCashFlowValue: (
+    year: number,
+    field: keyof CashFlowData[number],
+    value: number
+  ) => void;
   initializeCashFlow: () => void;
   initializeFormData: () => void;
   syncCashFlowFromFormData: () => void;
   saveToLocalStorage: () => void;
   loadFromLocalStorage: () => void;
-
-  // ライフイベント
   addLifeEvent: (event: LifeEvent) => void;
   removeLifeEvent: (index: number) => void;
-
-  // Form data actions
   setIncomeData: (data: IncomeSection) => void;
   setExpenseData: (data: ExpenseSection) => void;
   setAssetData: (data: AssetSection) => void;
   setLiabilityData: (data: LiabilitySection) => void;
-  
-  // History actions
   addHistoryEntry: (entry: Omit<HistoryEntry, 'timestamp'>) => void;
   clearHistory: () => void;
-
-  // **新機能**: 法人税設定関連のアクション
-  updateCorporateTaxSettings: (settings: Partial<CorporateTaxSettings>) => void;
+  updateCorporateTaxSettings: (
+    settings: Partial<CorporateTaxSettings>
+  ) => void;
 }
 
-// ★新機能：投資額を除いた仮収支を計算するヘルパー関数★
+// 仮収支（投資額を除外）計算
 function calculateTentativeBalance(
   section: 'personal' | 'corporate',
   data: {
-    // 個人収入データ
     mainIncome: number;
     sideIncome: number;
     otherSideIncome: number;
@@ -308,55 +297,64 @@ function calculateTentativeBalance(
     spousePensionIncome: number;
     personalInvestmentIncome: number;
     personalLifeEventIncome: number;
-    // 個人支出データ  
     livingExpense: number;
     housingExpense: number;
     educationExpense: number;
     otherPersonalExpense: number;
     personalLifeEventExpense: number;
     personalLoanRepayment: number;
-    // 法人収入データ
     corporateIncome: number;
     corporateOtherIncome: number;
     corporateInvestmentIncome: number;
     corporateLifeEventIncome: number;
-    // 法人支出データ
     corporateExpense: number;
     corporateOtherExpense: number;
     corporateCost: number;
     corporateLifeEventExpense: number;
     corporateLoanRepayment: number;
-    // 税金計算用
     parameters: Parameters;
   }
 ): number {
   if (section === 'personal') {
-    // 個人の仮収支 = 収入 - 支出（投資額除く）
-    const totalIncome = data.mainIncome + data.sideIncome + data.otherSideIncome + 
-                       data.spouseIncome + data.pensionIncome + data.spousePensionIncome + 
-                       data.personalInvestmentIncome + data.personalLifeEventIncome;
-    
-    const totalExpense = data.livingExpense + data.housingExpense + data.educationExpense + 
-                        data.otherPersonalExpense + data.personalLifeEventExpense + 
-                        data.personalLoanRepayment;
-    
+    const totalIncome =
+      data.mainIncome +
+      data.sideIncome +
+      data.otherSideIncome +
+      data.spouseIncome +
+      data.pensionIncome +
+      data.spousePensionIncome +
+      data.personalInvestmentIncome +
+      data.personalLifeEventIncome;
+    const totalExpense =
+      data.livingExpense +
+      data.housingExpense +
+      data.educationExpense +
+      data.otherPersonalExpense +
+      data.personalLifeEventExpense +
+      data.personalLoanRepayment;
     return totalIncome - totalExpense;
   } else {
-    // 法人の仮収支 = 収入 - 支出（投資額除く） - 税金
-    const totalIncome = data.corporateIncome + data.corporateOtherIncome + 
-                       data.corporateInvestmentIncome + data.corporateLifeEventIncome;
-    
-    const totalExpense = data.corporateExpense + data.corporateOtherExpense + data.corporateCost + 
-                        data.corporateLifeEventExpense + data.corporateLoanRepayment;
-    
+    const totalIncome =
+      data.corporateIncome +
+      data.corporateOtherIncome +
+      data.corporateInvestmentIncome +
+      data.corporateLifeEventIncome;
+    const totalExpense =
+      data.corporateExpense +
+      data.corporateOtherExpense +
+      data.corporateCost +
+      data.corporateLifeEventExpense +
+      data.corporateLoanRepayment;
     const pretaxProfit = totalIncome - totalExpense;
-    const taxResult = calculateCorporateTax(pretaxProfit, data.parameters.corporateTaxSettings);
-    
-    return taxResult.aftertaxProfit; // 税引き後利益
+    const taxResult = calculateCorporateTax(
+      pretaxProfit,
+      data.parameters.corporateTaxSettings
+    );
+    return taxResult.aftertaxProfit;
   }
 }
 
-// 教育費計算関数（元のファイルから抽出）
+// 教育費（現行ロジック維持）
 function calculateEducationExpense(
   children: BasicInfo['children'],
   plannedChildren: BasicInfo['plannedChildren'],
@@ -366,46 +364,48 @@ function calculateEducationExpense(
   educationCostIncreaseRate: number
 ): number {
   const yearsSinceStart = year - startYear;
-  const educationInflationFactor = Math.pow(1 + educationCostIncreaseRate / 100, yearsSinceStart);
-  
+  const educationInflationFactor = Math.pow(
+    1 + educationCostIncreaseRate / 100,
+    yearsSinceStart
+  );
+
+  const costs = {
+    nursery: { '公立': 29.9, '私立': 35.3, '行かない': 0 },
+    preschool: { '公立': 18.4, '私立': 34.7, '行かない': 0 },
+    elementary: { '公立': 33.6, '私立': 182.8, '行かない': 0 },
+    juniorHigh: { '公立': 54.2, '私立': 156, '行かない': 0 },
+    highSchool: { '公立': 59.7, '私立': 103, '行かない': 0 },
+    university: {
+      '国立大学（文系）': 60.6,
+      '国立大学（理系）': 60.6,
+      '私立大学（文系）': 102.6,
+      '私立大学（理系）': 135.4,
+      '行かない': 0,
+    },
+  };
+
   const existingChildrenExpense = children.reduce((total, child) => {
     const childAge = child.currentAge + yearsSinceStart;
     let expense = 0;
-
-    const costs = {
-     nursery: { '公立': 29.9, '私立': 35.3, '行かない': 0 },
-        preschool: { '公立': 18.4, '私立': 34.7, '行かない': 0 },
-        elementary: { '公立': 33.6, '私立': 182.8, '行かない': 0 },
-        juniorHigh: { '公立': 54.2, '私立': 156, '行かない': 0 },
-        highSchool: { '公立': 59.7, '私立': 103, '行かない': 0 },
-        university: {
-          '国立大学（文系）': 60.6,
-          '国立大学（理系）': 60.6,
-          '私立大学（文系）': 102.6,
-          '私立大学（理系）': 135.4,
-          '行かない': 0
-      }
-    };
-
     if (childAge >= 0 && childAge <= 2) {
-      expense = costs.nursery[child.educationPlan.nursery] || 0;
+      expense = (costs.nursery as any)[child.educationPlan.nursery] || 0;
     }
     if (childAge >= 3 && childAge <= 5) {
-      expense = costs.preschool[child.educationPlan.preschool] || 0;
+      expense = (costs.preschool as any)[child.educationPlan.preschool] || 0;
     }
     if (childAge >= 6 && childAge <= 11) {
-      expense = costs.elementary[child.educationPlan.elementary] || 0;
+      expense = (costs.elementary as any)[child.educationPlan.elementary] || 0;
     }
     if (childAge >= 12 && childAge <= 14) {
-      expense = costs.juniorHigh[child.educationPlan.juniorHigh] || 0;
+      expense = (costs.juniorHigh as any)[child.educationPlan.juniorHigh] || 0;
     }
     if (childAge >= 15 && childAge <= 17) {
-      expense = costs.highSchool[child.educationPlan.highSchool] || 0;
+      expense = (costs.highSchool as any)[child.educationPlan.highSchool] || 0;
     }
     if (childAge >= 18 && childAge <= 21) {
-      expense = costs.university[child.educationPlan.university] || 0;
+      expense =
+        (costs.university as any)[child.educationPlan.university] || 0;
     }
-
     const inflatedExpense = expense * educationInflationFactor;
     return total + inflatedExpense;
   }, 0);
@@ -414,41 +414,25 @@ function calculateEducationExpense(
     if (yearsSinceStart >= child.yearsFromNow) {
       const childAge = yearsSinceStart - child.yearsFromNow;
       let expense = 0;
-
-      const costs = {
-        nursery: { '公立': 29.9, '私立': 35.3, '行かない': 0 },
-        preschool: { '公立': 18.4, '私立': 34.7, '行かない': 0 },
-        elementary: { '公立': 33.6, '私立': 182.8, '行かない': 0 },
-        juniorHigh: { '公立': 54.2, '私立': 156, '行かない': 0 },
-        highSchool: { '公立': 59.7, '私立': 103, '行かない': 0 },
-        university: {
-          '国立大学（文系）': 60.6,
-          '国立大学（理系）': 60.6,
-          '私立大学（文系）': 102.6,
-          '私立大学（理系）': 135.4,
-          '行かない': 0
-        }
-      };
-
       if (childAge >= 0 && childAge <= 2) {
-        expense = costs.nursery[child.educationPlan.nursery] || 0;
+        expense = (costs.nursery as any)[child.educationPlan.nursery] || 0;
       }
       if (childAge >= 3 && childAge <= 5) {
-        expense = costs.preschool[child.educationPlan.preschool] || 0;
+        expense = (costs.preschool as any)[child.educationPlan.preschool] || 0;
       }
       if (childAge >= 6 && childAge <= 11) {
-        expense = costs.elementary[child.educationPlan.elementary] || 0;
+        expense = (costs.elementary as any)[child.educationPlan.elementary] || 0;
       }
       if (childAge >= 12 && childAge <= 14) {
-        expense = costs.juniorHigh[child.educationPlan.juniorHigh] || 0;
+        expense = (costs.juniorHigh as any)[child.educationPlan.juniorHigh] || 0;
       }
       if (childAge >= 15 && childAge <= 17) {
-        expense = costs.highSchool[child.educationPlan.highSchool] || 0;
+        expense = (costs.highSchool as any)[child.educationPlan.highSchool] || 0;
       }
       if (childAge >= 18 && childAge <= 21) {
-        expense = costs.university[child.educationPlan.university] || 0;
+        expense =
+          (costs.university as any)[child.educationPlan.university] || 0;
       }
-
       const inflatedExpense = expense * educationInflationFactor;
       return total + inflatedExpense;
     }
@@ -457,6 +441,7 @@ function calculateEducationExpense(
 
   return Number((existingChildrenExpense + plannedChildrenExpense).toFixed(1));
 }
+
 export const useSimulatorStore = create<SimulatorState>((set, get) => ({
   currentStep: 0,
   basicInfo: {
@@ -482,33 +467,97 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
     pensionStartAge: 65,
     willWorkAfterPension: false,
   },
-  // **修正**: parameters から incomeInvestmentReturn を削除
   parameters: {
     inflationRate: 0,
     educationCostIncreaseRate: 0,
     investmentReturn: 0,
     investmentRatio: 0,
     maxInvestmentAmount: 0,
-    // **新機能**: デフォルトの法人税設定
     corporateTaxSettings: DEFAULT_CORPORATE_TAX_SETTINGS,
   },
   cashFlow: {},
   history: [],
   lifeEvents: [],
 
-  // Initialize form data
+  // ===== 初期データ（法人IDは '101','102' に統一） =====
   incomeData: {
     personal: [
-      { id: '1', name: '給与収入', type: 'income', category: 'income', amounts: {}, investmentRatio: 0, maxInvestmentAmount: 0 },
-      { id: '2', name: '事業収入', type: 'profit', category: 'income', amounts: {}, investmentRatio: 0, maxInvestmentAmount: 0 },
-      { id: '3', name: '副業収入', type: 'side', category: 'income', amounts: {}, investmentRatio: 0, maxInvestmentAmount: 0 },
-      { id: '4', name: '配偶者収入', type: 'income', category: 'income', amounts: {}, investmentRatio: 0, maxInvestmentAmount: 0 },
-      { id: '5', name: '年金収入', type: 'income', category: 'income', amounts: {}, investmentRatio: 0, maxInvestmentAmount: 0, isAutoCalculated: false },
-      { id: '6', name: '配偶者年金収入', type: 'income', category: 'income', amounts: {}, investmentRatio: 0, maxInvestmentAmount: 0, isAutoCalculated: false },
+      {
+        id: '1',
+        name: '給与収入',
+        type: 'income',
+        category: 'income',
+        amounts: {},
+        investmentRatio: 0,
+        maxInvestmentAmount: 0,
+      },
+      {
+        id: '2',
+        name: '事業収入',
+        type: 'profit',
+        category: 'income',
+        amounts: {},
+        investmentRatio: 0,
+        maxInvestmentAmount: 0,
+      },
+      {
+        id: '3',
+        name: '副業収入',
+        type: 'side',
+        category: 'income',
+        amounts: {},
+        investmentRatio: 0,
+        maxInvestmentAmount: 0,
+      },
+      {
+        id: '4',
+        name: '配偶者収入',
+        type: 'income',
+        category: 'income',
+        amounts: {},
+        investmentRatio: 0,
+        maxInvestmentAmount: 0,
+      },
+      {
+        id: '5',
+        name: '年金収入',
+        type: 'income',
+        category: 'income',
+        amounts: {},
+        investmentRatio: 0,
+        maxInvestmentAmount: 0,
+        isAutoCalculated: false,
+      },
+      {
+        id: '6',
+        name: '配偶者年金収入',
+        type: 'income',
+        category: 'income',
+        amounts: {},
+        investmentRatio: 0,
+        maxInvestmentAmount: 0,
+        isAutoCalculated: false,
+      },
     ],
     corporate: [
-      { id: '101', name: '売上', type: 'income', category: 'income', amounts: {}, investmentRatio: 0, maxInvestmentAmount: 0 },
-      { id: '102', name: 'その他収入', type: 'income', category: 'income', amounts: {}, investmentRatio: 0, maxInvestmentAmount: 0 },
+      {
+        id: '101', // ← ここを '101' に統一
+        name: '売上',
+        type: 'income',
+        category: 'income',
+        amounts: {},
+        investmentRatio: 0,
+        maxInvestmentAmount: 0,
+      },
+      {
+        id: '102', // ← ここを '102' に統一
+        name: 'その他収入',
+        type: 'income',
+        category: 'income',
+        amounts: {},
+        investmentRatio: 0,
+        maxInvestmentAmount: 0,
+      },
     ],
   },
   expenseData: {
@@ -525,79 +574,111 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
   },
   assetData: {
     personal: [
-      { id: '1', name: '現金・預金', type: 'cash', category: 'asset', amounts: {}, isInvestment: false, investmentReturn: 0.1 },
-      { id: '2', name: '投資資産', type: 'investment', category: 'asset', amounts: {}, isInvestment: true, investmentReturn: 5.0 },
+      {
+        id: '1',
+        name: '現金・預金',
+        type: 'cash',
+        category: 'asset',
+        amounts: {},
+        isInvestment: false,
+        investmentReturn: 0.1,
+      },
+      {
+        id: '2',
+        name: '投資資産',
+        type: 'investment',
+        category: 'asset',
+        amounts: {},
+        isInvestment: true,
+        investmentReturn: 5.0,
+      },
     ],
     corporate: [],
   },
   liabilityData: {
     personal: [
-      { id: '1', name: 'ローン', type: 'loan', category: 'liability', amounts: {}, interestRate: 1.0, termYears: 35 },
+      {
+        id: '1',
+        name: 'ローン',
+        type: 'loan',
+        category: 'liability',
+        amounts: {},
+        interestRate: 1.0,
+        termYears: 35,
+        autoCalculate: false, // 住宅ローンは住居費で一元計上（現行維持）
+      },
       { id: '2', name: 'クレジット残高', type: 'credit', category: 'liability', amounts: {} },
     ],
     corporate: [
-      { id: '1', name: '借入金', type: 'loan', category: 'liability', amounts: {}, interestRate: 2.0, termYears: 10 },
+      {
+        id: '1',
+        name: '借入金',
+        type: 'loan',
+        category: 'liability',
+        amounts: {},
+        interestRate: 2.0,
+        termYears: 10,
+        autoCalculate: true,
+      },
       { id: '2', name: '未払金', type: 'other', category: 'liability', amounts: {} },
     ],
   },
 
-  // Actions
+  // ===== Actions =====
   setCurrentStep: (step) => set({ currentStep: step }),
-  
+
   setBasicInfo: (info) => {
     set((state) => ({ basicInfo: { ...state.basicInfo, ...info } }));
     get().initializeFormData();
     get().initializeCashFlow();
   },
-  
+
   setParameters: (params) => {
     set((state) => ({ parameters: { ...state.parameters, ...params } }));
-    
-    // パラメータ変更時に支出データのインフレ再計算を行う
+
     const state = get();
     const { basicInfo, expenseData } = state;
     const startYear = basicInfo.startYear;
-    
-    // 更新後のパラメータをマージ
     const newParameters = { ...state.parameters, ...params };
-    
-    // 支出データの全項目について再計算
+
     let updatedExpenseData = { ...expenseData };
-    
-    ['personal', 'corporate'].forEach(section => {
-      updatedExpenseData[section] = updatedExpenseData[section].map(expense => {
+
+    (['personal', 'corporate'] as const).forEach((section) => {
+      updatedExpenseData[section] = updatedExpenseData[section].map((expense) => {
         const updatedExpense = { ...expense };
-        
-        // 生データがある場合、その値からインフレ計算をやり直す
+
         if (updatedExpense._rawAmounts) {
-          Object.keys(updatedExpense._rawAmounts).forEach(yearStr => {
-            const year = parseInt(yearStr);
+          Object.keys(updatedExpense._rawAmounts).forEach((yearStr) => {
+            const year = parseInt(yearStr, 10);
             const rawValue = updatedExpense._rawAmounts![year];
             const yearsSinceStart = year - startYear;
-            
+
             let inflationRate = 0;
-            if (updatedExpense.category === 'living' || updatedExpense.category === 'housing' || 
-                updatedExpense.category === 'business' || updatedExpense.category === 'office') {
+            if (
+              updatedExpense.category === 'living' ||
+              updatedExpense.category === 'housing' ||
+              updatedExpense.category === 'business' ||
+              updatedExpense.category === 'office'
+            ) {
               inflationRate = newParameters.inflationRate;
             } else if (updatedExpense.category === 'education') {
               inflationRate = newParameters.educationCostIncreaseRate;
             }
-            
+
             const inflationFactor = Math.pow(1 + inflationRate / 100, yearsSinceStart);
             updatedExpense.amounts[year] = Math.round(rawValue * inflationFactor * 10) / 10;
           });
         }
-        
         return updatedExpense;
       });
     });
-    
+
     set({ expenseData: updatedExpenseData });
     get().initializeCashFlow();
   },
-  
+
   setCashFlow: (data) => set({ cashFlow: data }),
-  
+
   updateCashFlowValue: (year, field, value) => {
     const roundedValue = Number(value.toFixed(1));
     set((state) => ({
@@ -609,111 +690,78 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
         },
       },
     }));
+    // 現行仕様：手修正後も即再計算で上書き（仕様維持）
     get().initializeCashFlow();
   },
-  // **完全修正版: syncCashFlowFromFormData - 法人給与連携機能追加**
+
+  // ====== 中核：現行ロジック維持 + ピンポイント修正 ======
   syncCashFlowFromFormData: () => {
     try {
       const state = get();
       const { basicInfo, parameters, incomeData, expenseData, assetData, liabilityData, lifeEvents } = state;
+
       const yearsUntilDeath = basicInfo.deathAge - basicInfo.currentAge;
-      const years = Array.from(
-        { length: yearsUntilDeath + 1 },
-        (_, i) => basicInfo.startYear + i
-      );
+      const years = Array.from({ length: yearsUntilDeath + 1 }, (_, i) => basicInfo.startYear + i);
 
       const newCashFlow: CashFlowData = {};
-      
-      // 資産と負債のデータをディープコピーして作業用として使用
-      const workingAssetData = JSON.parse(JSON.stringify(assetData));
-      const workingLiabilityData = JSON.parse(JSON.stringify(liabilityData));
-      const workingExpenseData = JSON.parse(JSON.stringify(expenseData));
-      
-      // 法人給与から法人経費への連携処理
-      incomeData.personal.forEach((incomeItem) => {
+
+      // ★直接ミューテーション回避：作業用にdeep clone
+      const workingIncomeData: IncomeSection = JSON.parse(JSON.stringify(incomeData));
+      const workingExpenseData: ExpenseSection = JSON.parse(JSON.stringify(expenseData));
+      const workingAssetData: AssetSection = JSON.parse(JSON.stringify(assetData));
+      const workingLiabilityData: LiabilitySection = JSON.parse(JSON.stringify(liabilityData));
+
+      // --- 法人給与→法人経費 連携（従来ロジック維持） ---
+      workingIncomeData.personal.forEach((incomeItem) => {
         if (incomeItem.isCorporateSalary && incomeItem.corporateSalaryType) {
-          // 既存の連携済み経費を探す、なければ新規作成
           let linkedExpenseItem = workingExpenseData.corporate.find(
-            (expense: ExpenseItem) => expense.linkedIncomeId === incomeItem.id
+            (e) => e.linkedIncomeId === incomeItem.id
           );
-          
           if (!linkedExpenseItem) {
-            // 新規作成
             linkedExpenseItem = {
               id: `linked_expense_${incomeItem.id}`,
               name: `従業員給与（${incomeItem.name}）`,
-              type: 'other' as const,
+              type: 'other',
               category: 'employee_salary',
               amounts: {},
               _rawAmounts: {},
               isLinkedFromIncome: true,
-              linkedIncomeId: incomeItem.id
+              linkedIncomeId: incomeItem.id,
             };
             workingExpenseData.corporate.push(linkedExpenseItem);
           }
-          
-          // 各年の法人経費を計算
-          years.forEach(year => {
+
+          years.forEach((year) => {
             const salaryAmount = incomeItem._originalAmounts?.[year] || incomeItem.amounts[year] || 0;
-            
             if (salaryAmount > 0) {
-              // 社保設定の判定
               let hasSocialInsurance = false;
-              
+
               if (incomeItem.corporateSalaryType === 'full-time') {
-                // 専業の場合は常に社保あり（設定値がある場合はそれを使用）
                 hasSocialInsurance = incomeItem.socialInsuranceByYear?.[year] ?? true;
-              } else if (incomeItem.corporateSalaryType === 'part-time') {
-                // 副業の場合
-                if (incomeItem.autoSwitchEnabled && 
-                    incomeItem.autoSwitchIncomeIds && 
-                    incomeItem.autoSwitchIncomeIds.length > 0 &&
-                    !incomeItem.manualOverrideYears?.[year]) {
-                  // 自動切り替えが有効かつ手動設定されていない場合
-                  
-                  // 監視対象収入の合計を計算（額面で比較）
+              } else {
+                // part-time
+                if (
+                  incomeItem.autoSwitchEnabled &&
+                  incomeItem.autoSwitchIncomeIds?.length &&
+                  !incomeItem.manualOverrideYears?.[year]
+                ) {
                   let targetIncomeTotal = 0;
-                  incomeItem.autoSwitchIncomeIds.forEach(targetId => {
-                    const targetIncome = incomeData.personal.find(item => item.id === targetId);
-                    if (targetIncome) {
-                      // 額面があれば額面を、なければ手取りを使用
-                      const targetAmount = targetIncome._originalAmounts?.[year] || targetIncome.amounts[year] || 0;
-                      targetIncomeTotal += targetAmount;
-                    }
+                  incomeItem.autoSwitchIncomeIds.forEach((id) => {
+                    const t = workingIncomeData.personal.find((x) => x.id === id);
+                    const v = t?._originalAmounts?.[year] || t?.amounts[year] || 0;
+                    targetIncomeTotal += v;
                   });
-                  
-                  // デバッグ用ログ
-                  console.log(`自動切り替え判定 ${year}年:`, {
-                    法人給与額面: salaryAmount,
-                    監視対象収入合計: targetIncomeTotal,
-                    判定結果: salaryAmount > targetIncomeTotal ? '社保あり' : '社保なし'
-                  });
-                  
-                  // 法人給与が監視対象収入を上回った場合、社保を自動でオンにする
-                  if (salaryAmount > targetIncomeTotal) {
-                    hasSocialInsurance = true;
-                    // socialInsuranceByYearも更新
-                    if (!incomeItem.socialInsuranceByYear) {
-                      incomeItem.socialInsuranceByYear = {};
-                    }
-                    incomeItem.socialInsuranceByYear[year] = true;
-                  } else {
-                    // 上回らない場合は設定値を使用（デフォルトはfalse）
-                    hasSocialInsurance = false;
-                    if (!incomeItem.socialInsuranceByYear) {
-                      incomeItem.socialInsuranceByYear = {};
-                    }
-                    incomeItem.socialInsuranceByYear[year] = false;
-                  }
+                  hasSocialInsurance = salaryAmount > targetIncomeTotal;
+                  incomeItem.socialInsuranceByYear = {
+                    ...(incomeItem.socialInsuranceByYear || {}),
+                    [year]: hasSocialInsurance,
+                  };
                 } else {
-                  // 自動切り替えが無効または手動設定済みの場合は設定値を使用
                   hasSocialInsurance = incomeItem.socialInsuranceByYear?.[year] ?? false;
                 }
               }
-              
-              // 法人側の従業員給与費用を計算
+
               const employeeCost = calculateCorporateEmployeeCost(salaryAmount, hasSocialInsurance);
-              
               linkedExpenseItem.amounts[year] = employeeCost;
               linkedExpenseItem._rawAmounts![year] = employeeCost;
             } else {
@@ -721,112 +769,135 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
               linkedExpenseItem._rawAmounts![year] = 0;
             }
           });
-          
-          // linkedExpenseIdを収入側に保存
+
           incomeItem.linkedExpenseId = linkedExpenseItem.id;
         }
       });
-      
-      // 負債の返済スケジュールを計算
+
+      // --- ローン返済スケジュール（問題1：その他ローンだけ利息対応） ---
       const calculateLoanRepayments = (section: 'personal' | 'corporate') => {
-        let repayments: { [year: number]: number } = {};
-        
-        // 各負債項目の返済を計算
-        workingLiabilityData[section].forEach((liability: any) => {
-          if (liability.autoCalculate && liability.originalAmount && liability.termYears && liability.startYear) {
-            for (let i = 0; i < liability.termYears; i++) {
-              const repaymentYear = liability.startYear + i;
-              if (repaymentYear >= basicInfo.startYear && repaymentYear <= basicInfo.startYear + yearsUntilDeath) {
-                const monthlyPayment = liability.originalAmount / liability.termYears / 12;
-                const annualPayment = monthlyPayment * 12;
-                repayments[repaymentYear] = (repayments[repaymentYear] || 0) + annualPayment;
+        const repayments: { [year: number]: number } = {};
+
+        workingLiabilityData[section].forEach((liability) => {
+          if (
+            liability.autoCalculate &&
+            liability.originalAmount &&
+            liability.termYears &&
+            liability.startYear
+          ) {
+            // 住宅ローン（個人・名前「ローン」）は現行維持のため除外（住居費で一元計上）
+            const isPersonalHousingLoan =
+              section === 'personal' && liability.name === 'ローン';
+
+            if (isPersonalHousingLoan) return;
+
+            const start = liability.startYear;
+            const endYear = liability.startYear + liability.termYears;
+            const rate = liability.interestRate ?? 0; // 年利（%）
+            const repaymentType = liability.repaymentType || 'equal_payment';
+
+            let remainingPrincipal = liability.originalAmount;
+
+            for (
+              let y = start;
+              y < endYear && y <= basicInfo.startYear + yearsUntilDeath;
+              y++
+            ) {
+              let annualPayment = 0;
+
+              if (repaymentType === 'equal_payment') {
+                // 元利均等：月額（利息込み一定）×12
+                const monthly = calculateMonthlyMortgage(
+                  liability.originalAmount,
+                  rate,
+                  liability.termYears
+                );
+                annualPayment = monthly * 12;
+              } else {
+                // 元金均等：月次で概算（残高×月利 + 均等元金）
+                const monthlyPrincipal =
+                  liability.originalAmount / (liability.termYears * 12);
+                for (let m = 0; m < 12; m++) {
+                  if (remainingPrincipal <= 0) break;
+                  const monthlyInterest = (remainingPrincipal * (rate / 100)) / 12;
+                  const payPrincipal = Math.min(remainingPrincipal, monthlyPrincipal);
+                  annualPayment += monthlyInterest + payPrincipal;
+                  remainingPrincipal -= payPrincipal;
+                }
               }
+
+              repayments[y] = (repayments[y] || 0) + Number(annualPayment.toFixed(1));
             }
           }
         });
-        
+
         return repayments;
       };
 
       const personalLoanRepayments = calculateLoanRepayments('personal');
       const corporateLoanRepayments = calculateLoanRepayments('corporate');
 
-      // 投資資産と運用収益の追跡
-      let personalInvestmentAssets = 0;
-      let corporateInvestmentAssets = 0;
+      // 初期総資産（現行ロジック維持）
       let personalTotalAssets = 0;
       let corporateTotalAssets = 0;
-
-      // 初期資産の設定（各資産項目の初期値を総資産に加算）
-      workingAssetData.personal.forEach((asset: any) => {
-        const initialAmount = asset.amounts[basicInfo.startYear] || 0;
-        personalTotalAssets += initialAmount;
-        if (asset.isInvestment) {
-          personalInvestmentAssets += initialAmount;
-        }
+      workingAssetData.personal.forEach((a) => {
+        personalTotalAssets += a.amounts[basicInfo.startYear] || 0;
+      });
+      workingAssetData.corporate.forEach((a) => {
+        corporateTotalAssets += a.amounts[basicInfo.startYear] || 0;
       });
 
-      workingAssetData.corporate.forEach((asset: any) => {
-        const initialAmount = asset.amounts[basicInfo.startYear] || 0;
-        corporateTotalAssets += initialAmount;
-        if (asset.isInvestment) {
-          corporateInvestmentAssets += initialAmount;
-        }
-      });
-
-      // 年金計算を実行 - ヘルパー関数
-      const findPersonalItem = (name: string) => incomeData.personal.find(i => i.name === name);
-      
-      // 年金関連項目を取得
+      // 年金（自動計算フラグ時のみ／workingIncomeDataで計算）
+      const findPersonalItem = (name: string) =>
+        workingIncomeData.personal.find((i) => i.name === name);
       const pensionItem = findPersonalItem('年金収入');
       const spousePensionItem = findPersonalItem('配偶者年金収入');
 
-      // 年金計算を実行
       if (pensionItem && pensionItem.isAutoCalculated) {
-        years.forEach(year => {
-          const yearsSinceStart = year - basicInfo.startYear;
-          const age = basicInfo.currentAge + yearsSinceStart;
-          
-          if (age >= (basicInfo.pensionStartAge || 65)) {
-            const calculatedPensionIncome = calculatePensionForYear(basicInfo, incomeData, year);
-            pensionItem.amounts[year] = calculatedPensionIncome;
-          } else {
-            pensionItem.amounts[year] = 0;
-          }
+        years.forEach((year) => {
+          const age = basicInfo.currentAge + (year - basicInfo.startYear);
+          pensionItem.amounts[year] =
+            age >= (basicInfo.pensionStartAge || 65)
+              ? calculatePensionForYear(basicInfo, workingIncomeData, year)
+              : 0;
         });
       }
 
-      // 配偶者年金の計算
-      if (spousePensionItem && spousePensionItem.isAutoCalculated && basicInfo.maritalStatus !== 'single') {
-        years.forEach(year => {
-          const yearsSinceStart = year - basicInfo.startYear;
+      if (
+        spousePensionItem &&
+        spousePensionItem.isAutoCalculated &&
+        basicInfo.maritalStatus !== 'single'
+      ) {
+        years.forEach((year) => {
+          const ys = year - basicInfo.startYear;
           let spouseAge = 0;
-          
           if (basicInfo.maritalStatus === 'married' && basicInfo.spouseInfo?.currentAge) {
-            spouseAge = basicInfo.spouseInfo.currentAge + yearsSinceStart;
-          } else if (basicInfo.maritalStatus === 'planning' && basicInfo.spouseInfo?.marriageAge && basicInfo.spouseInfo?.age) {
-            const marriageYear = basicInfo.startYear + (basicInfo.spouseInfo.marriageAge - basicInfo.currentAge);
-            
+            spouseAge = basicInfo.spouseInfo.currentAge + ys;
+          } else if (
+            basicInfo.maritalStatus === 'planning' &&
+            basicInfo.spouseInfo?.marriageAge &&
+            basicInfo.spouseInfo?.age
+          ) {
+            const marriageYear =
+              basicInfo.startYear +
+              (basicInfo.spouseInfo.marriageAge - basicInfo.currentAge);
             if (year < marriageYear) {
               spousePensionItem.amounts[year] = 0;
               return;
             }
-            
             const ageAtMarriage = basicInfo.spouseInfo.age;
             spouseAge = ageAtMarriage + (year - marriageYear);
           }
-          
-          if (spouseAge >= (basicInfo.spouseInfo?.pensionStartAge || 65)) {
-            const calculatedSpousePensionIncome = calculateSpousePensionForYear(basicInfo, incomeData, year);
-            spousePensionItem.amounts[year] = calculatedSpousePensionIncome;
-          } else {
-            spousePensionItem.amounts[year] = 0;
-          }
+          spousePensionItem.amounts[year] =
+            spouseAge >= (basicInfo.spouseInfo?.pensionStartAge || 65)
+              ? calculateSpousePensionForYear(basicInfo, workingIncomeData, year)
+              : 0;
         });
       }
 
+      // 年次ループ
       years.forEach((year, yearIndex) => {
-        // === 1. 収入計算（法人給与の手取り計算も含む） ===
+        // 1) 収入
         let mainIncome = 0;
         let sideIncome = 0;
         let otherSideIncome = 0;
@@ -836,147 +907,120 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
         let corporateIncome = 0;
         let corporateOtherIncome = 0;
 
-        // 各収入項目を処理
-        incomeData.personal.forEach((income: any) => {
+        workingIncomeData.personal.forEach((income) => {
           let amount = income.amounts[year] || 0;
-          
-          // 法人給与の場合は特別な手取り計算を適用
+
+          // 役員/従業員の法人給与 → 手取り化（現行維持）
           if (income.isCorporateSalary && income._originalAmounts?.[year]) {
-            let hasSocialInsurance = false;
-            
-            if (income.corporateSalaryType === 'full-time') {
-              // 専業の場合
-              hasSocialInsurance = income.socialInsuranceByYear?.[year] ?? true;
-            } else if (income.corporateSalaryType === 'part-time') {
-              // 副業の場合は設定値を使用（自動切り替えの結果は既に反映済み）
-              hasSocialInsurance = income.socialInsuranceByYear?.[year] ?? false;
-            }
-            
-            const netResult = calculateNetIncomeForDirector(
-              income._originalAmounts[year], 
-              hasSocialInsurance
-            );
-            amount = netResult.netIncome;
-            income.amounts[year] = amount; // 手取り額を更新
+            const hasSI =
+              income.corporateSalaryType === 'full-time'
+                ? income.socialInsuranceByYear?.[year] ?? true
+                : income.socialInsuranceByYear?.[year] ?? false;
+            const net = calculateNetIncomeForDirector(income._originalAmounts[year], hasSI);
+            amount = net.netIncome;
+            income.amounts[year] = amount; // working に対してのみ
           }
-          
-          if (income.name === '給与収入') {
-            mainIncome += amount;
-          } else if (income.name === '副業収入') {
-            sideIncome += amount;
-          } else if (income.name === '配偶者収入') {
-            spouseIncome += amount;
-          } else if (income.name === '年金収入') {
-            pensionIncome += amount;
-          } else if (income.name === '配偶者年金収入') {
-            spousePensionIncome += amount;
-          } else {
-            otherSideIncome += amount;
-          }
+
+          if (income.name === '給与収入') mainIncome += amount;
+          else if (income.name === '副業収入') sideIncome += amount;
+          else if (income.name === '配偶者収入') spouseIncome += amount;
+          else if (income.name === '年金収入') pensionIncome += amount;
+          else if (income.name === '配偶者年金収入') spousePensionIncome += amount;
+          else otherSideIncome += amount;
         });
 
-        incomeData.corporate.forEach((income: any) => {
+        workingIncomeData.corporate.forEach((income) => {
           const amount = income.amounts[year] || 0;
-          if (income.name === '売上') {
-            corporateIncome += amount;
-          } else {
-            corporateOtherIncome += amount;
-          }
+          if (income.name === '売上') corporateIncome += amount;
+          else corporateOtherIncome += amount;
         });
 
-        // === 2. 運用収益計算（資産ページの資産を含む）===
-        let personalInvestmentIncome = 0;  // 運用収益の変数を先に宣言
-        let corporateInvestmentIncome = 0;  // 運用収益の変数を先に宣言
+        // 2) 運用収益（資産ページの運用）
+        let personalInvestmentIncome = 0;
+        let corporateInvestmentIncome = 0;
 
-        if (yearIndex > 0) { // 初年度は運用収益なし
-          // 資産ページの個別運用利回りを適用し、資産額を更新
-          workingAssetData.personal.forEach((asset: any) => {
+        if (yearIndex > 0) {
+          // 個人
+          workingAssetData.personal.forEach((asset) => {
             if (asset.isInvestment && asset.type !== 'income_investment') {
-              // 収入投資以外の運用資産
-              // 前年の資産額を取得
-              let assetAmount = asset.amounts[year - 1] || 0;
-              
-              // 前年に資産がなく、当年に新規で資産が追加された場合の処理
-              if (assetAmount === 0 && asset.amounts[year] && asset.amounts[year] > 0) {
-                // 当年から新規で資産が追加された場合は、当年は運用収益なしで翌年から開始
-              } else if (assetAmount > 0) {
-                // 前年に資産があった場合、運用収益を計算
-                const investmentReturn = asset.investmentReturn || parameters.investmentReturn || 5.0;
-                if (investmentReturn > 0) {
-                  const assetInvestmentIncome = assetAmount * (investmentReturn / 100);
-                  personalInvestmentIncome += assetInvestmentIncome;
-                  
-                  // 資産自体の金額を運用収益分増加させる
-                  const currentInputAmount = asset.amounts[year] || 0;
-                  asset.amounts[year] = assetAmount + assetInvestmentIncome + currentInputAmount;
-                }
+              const prev = asset.amounts[year - 1] || 0;
+              if (prev > 0) {
+                const r = asset.investmentReturn || parameters.investmentReturn || 5.0;
+                const inc = prev * (r / 100);
+                personalInvestmentIncome += inc;
+                const inputNow = asset.amounts[year] || 0;
+                asset.amounts[year] = prev + inc + inputNow;
+              } else if (!asset.amounts[year]) {
+                asset.amounts[year] = 0;
               }
             } else if (!asset.isInvestment && asset.type !== 'income_investment') {
-              // 運用資産でない場合は前年と同額（または設定値）
-              if (!asset.amounts[year]) {
-                asset.amounts[year] = asset.amounts[year - 1] || 0;
-              }
+              if (!asset.amounts[year]) asset.amounts[year] = asset.amounts[year - 1] || 0;
             }
-            // 収入投資の運用収益は別途計算
           });
-
-          workingAssetData.corporate.forEach((asset: any) => {
+          // 法人
+          workingAssetData.corporate.forEach((asset) => {
             if (asset.isInvestment && asset.type !== 'income_investment') {
-              // 収入投資以外の運用資産
-              // 前年の資産額を取得
-              let assetAmount = asset.amounts[year - 1] || 0;
-              
-              // 前年に資産がなく、当年に新規で資産が追加された場合の処理
-              if (assetAmount === 0 && asset.amounts[year] && asset.amounts[year] > 0) {
-                // 当年から新規で資産が追加された場合は、当年は運用収益なしで翌年から開始
-              } else if (assetAmount > 0) {
-                // 前年に資産があった場合、運用収益を計算
-                const investmentReturn = asset.investmentReturn || parameters.investmentReturn || 5.0;
-                if (investmentReturn > 0) {
-                  const assetInvestmentIncome = assetAmount * (investmentReturn / 100);
-                  corporateInvestmentIncome += assetInvestmentIncome;
-                  
-                  // 資産自体の金額を運用収益分増加させる
-                  const currentInputAmount = asset.amounts[year] || 0;
-                  asset.amounts[year] = assetAmount + assetInvestmentIncome + currentInputAmount;
-                }
+              const prev = asset.amounts[year - 1] || 0;
+              if (prev > 0) {
+                const r = asset.investmentReturn || parameters.investmentReturn || 5.0;
+                const inc = prev * (r / 100);
+                corporateInvestmentIncome += inc;
+                const inputNow = asset.amounts[year] || 0;
+                asset.amounts[year] = prev + inc + inputNow;
+              } else if (!asset.amounts[year]) {
+                asset.amounts[year] = 0;
               }
             } else if (!asset.isInvestment && asset.type !== 'income_investment') {
-              // 運用資産でない場合は前年と同額（または設定値）
-              if (!asset.amounts[year]) {
-                asset.amounts[year] = asset.amounts[year - 1] || 0;
-              }
+              if (!asset.amounts[year]) asset.amounts[year] = asset.amounts[year - 1] || 0;
             }
-            // 収入投資の運用収益は別途計算
           });
         } else {
-          // 初年度は資産額をそのまま設定（収入投資以外）
-          workingAssetData.personal.forEach((asset: any) => {
+          // 初年度：設定値をそのまま
+          workingAssetData.personal.forEach((asset) => {
             if (!asset.amounts[year] && asset.type !== 'income_investment') {
               asset.amounts[year] = asset.amounts[basicInfo.startYear] || 0;
             }
           });
-
-          workingAssetData.corporate.forEach((asset: any) => {
+          workingAssetData.corporate.forEach((asset) => {
             if (!asset.amounts[year] && asset.type !== 'income_investment') {
               asset.amounts[year] = asset.amounts[basicInfo.startYear] || 0;
             }
           });
         }
 
-        // === 3. 支出計算（法人原価追加、連携された従業員給与を含む）===
+        // 3) 支出（＋配偶者追加支出の上乗せ）
         let livingExpense = 0;
         let housingExpense = 0;
         let educationExpense = 0;
         let otherPersonalExpense = 0;
         let corporateExpense = 0;
         let corporateOtherExpense = 0;
-        let corporateCost = 0; // 法人原価を追加
+        let corporateCost = 0;
 
-        workingExpenseData.personal.forEach((expense: any) => {
+        workingExpenseData.personal.forEach((expense) => {
           const amount = expense.amounts[year] || 0;
           if (expense.name === '生活費') {
             livingExpense += amount;
+
+            // ★配偶者追加支出の上乗せ（結婚年以降）
+            const add = basicInfo.spouseInfo?.additionalExpense || 0;
+            if (add > 0 && basicInfo.maritalStatus !== 'single') {
+              let effective = true;
+              if (basicInfo.maritalStatus === 'planning' && basicInfo.spouseInfo?.marriageAge) {
+                const marriageYear =
+                  basicInfo.startYear +
+                  (basicInfo.spouseInfo.marriageAge - basicInfo.currentAge);
+                if (year < marriageYear) effective = false;
+              }
+              if (effective) {
+                const yearsSinceStart = year - basicInfo.startYear;
+                const inflationFactor = Math.pow(
+                  1 + (parameters.inflationRate || 0) / 100,
+                  yearsSinceStart
+                );
+                livingExpense += Math.round(add * inflationFactor * 10) / 10;
+              }
+            }
           } else if (expense.name === '住居費') {
             housingExpense += amount;
           } else if (expense.name === '教育費') {
@@ -986,230 +1030,193 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
           }
         });
 
-        workingExpenseData.corporate.forEach((expense: any) => {
-          // 法人原価の場合は自動計算
+        workingExpenseData.corporate.forEach((expense) => {
           if (expense.category === 'cost' && expense._costSettings) {
-            const costSettings = expense._costSettings;
             const yearsSinceStart = year - basicInfo.startYear;
-            
-            // その年の法人売上合計を計算
             let totalRevenue = 0;
-            incomeData.corporate.forEach(revenueItem => {
-              totalRevenue += revenueItem.amounts[year] || 0;
+            workingIncomeData.corporate.forEach((r) => {
+              totalRevenue += r.amounts[year] || 0;
             });
-            
-            // 原価率を上昇率で調整
-            const adjustedCostRatio = costSettings.costRatio + (costSettings.costIncreaseRate * yearsSinceStart);
-            
-            // 原価を計算
-            let costAmount = totalRevenue * (adjustedCostRatio / 100);
-            
-            // 上限値の適用
-            if (costSettings.maxCostAmount && costAmount > costSettings.maxCostAmount) {
-              costAmount = costSettings.maxCostAmount;
+            const adjusted = expense._costSettings.costRatio +
+              expense._costSettings.costIncreaseRate * yearsSinceStart;
+            let costAmount = totalRevenue * (adjusted / 100);
+            if (expense._costSettings.maxCostAmount && costAmount > expense._costSettings.maxCostAmount) {
+              costAmount = expense._costSettings.maxCostAmount;
             }
-            
             corporateCost += costAmount;
-            
-            // 計算した原価を経費データに反映（リアルタイム更新）
             expense.amounts[year] = Math.floor(costAmount);
           } else {
             const amount = expense.amounts[year] || 0;
-            if (expense.name === '事業経費') {
-              corporateExpense += amount;
-            } else {
-              corporateOtherExpense += amount;
-            }
+            if (expense.name === '事業経費') corporateExpense += amount;
+            else corporateOtherExpense += amount;
           }
         });
 
-        // === 4. ライフイベント計算 ===
+        // 4) ライフイベント
         let personalLifeEventIncome = 0;
         let personalLifeEventExpense = 0;
         let corporateLifeEventIncome = 0;
         let corporateLifeEventExpense = 0;
-
-        lifeEvents.filter(event => event.year === year).forEach(event => {
-          if (event.source === 'personal') {
-            if (event.type === 'income') {
-              personalLifeEventIncome += event.amount;
-            } else {
-              personalLifeEventExpense += event.amount;
+        lifeEvents
+          .filter((e) => e.year === year)
+          .forEach((e) => {
+            if (e.source === 'personal') {
+              if (e.type === 'income') personalLifeEventIncome += e.amount;
+              else personalLifeEventExpense += e.amount;
+            } else if (e.source === 'corporate') {
+              if (e.type === 'income') corporateLifeEventIncome += e.amount;
+              else corporateLifeEventExpense += e.amount;
             }
-          } else if (event.source === 'corporate') {
-            if (event.type === 'income') {
-              corporateLifeEventIncome += event.amount;
-            } else {
-              corporateLifeEventExpense += event.amount;
-            }
-          }
-        });
+          });
 
-        // === 5. ローン返済額取得 ===
+        // 5) ローン返済（住宅ローンは含まない）
         const personalLoanRepayment = personalLoanRepayments[year] || 0;
         const corporateLoanRepayment = corporateLoanRepayments[year] || 0;
 
-        // === 6. ★修正：収入投資の計算（収支マイナス時投資停止機能付き）===
+        // 6) 収入投資（現行維持）
         let personalInvestmentAmount = 0;
         let corporateInvestmentAmount = 0;
 
-        // 収入投資の処理（修正版 - 運用収益をキャッシュフローに加算 & 収支チェック付き）
-        ['personal', 'corporate'].forEach((section) => {
-          workingAssetData[section].forEach((asset: any) => {
+        (['personal', 'corporate'] as const).forEach((section) => {
+          workingAssetData[section].forEach((asset) => {
             if (asset.type === 'income_investment' && asset.linkedIncomeId) {
-              // 前年の残高を取得（貯金箱の中身を確認）
-              const previousBalance = yearIndex > 0 ? (asset.amounts[year - 1] || 0) : 0;
-              
-              // 運用収益を計算（2年目以降）
+              const previousBalance = yearIndex > 0 ? asset.amounts[year - 1] || 0 : 0;
+
+              // 収入投資の運用益（前年残高に対して）
               let assetInvestmentIncome = 0;
               if (yearIndex > 0 && previousBalance > 0) {
                 const returnRate = asset.investmentReturn || 0;
                 assetInvestmentIncome = previousBalance * (returnRate / 100);
-                
-                // ★運用収益をキャッシュフローに加算★
-                if (section === 'personal') {
-                  personalInvestmentIncome += assetInvestmentIncome;
-                } else {
-                  corporateInvestmentIncome += assetInvestmentIncome;
-                }
+                if (section === 'personal') personalInvestmentIncome += assetInvestmentIncome;
+                else corporateInvestmentIncome += assetInvestmentIncome;
               }
-              
-              // 紐付けられた収入を取得
-              const linkedIncomeType = asset.linkedIncomeType || section;
-              const linkedIncome = incomeData[linkedIncomeType].find(
-                (income: any) => income.id === asset.linkedIncomeId
+
+              // リンク収入を取得（sectionまたは明示されたlinkedIncomeType）
+              const linkedType = (asset.linkedIncomeType || section) as 'personal' | 'corporate';
+              const linkedIncome = workingIncomeData[linkedType].find(
+                (i) => i.id === asset.linkedIncomeId
               );
-              
+
               if (linkedIncome) {
                 const incomeAmount = linkedIncome.amounts[year] || 0;
-                const investmentRatio = asset.investmentRatio || 0;
-                const maxInvestmentAmount = asset.maxInvestmentAmount || Infinity;
-                
-                // ★新機能：収支マイナス時は投資停止★
+                const ratio = asset.investmentRatio || 0;
+                const maxAmt = asset.maxInvestmentAmount || Infinity;
+
+                // 投資額を除いた仮収支がプラスのときのみ投資
+                const tentative = calculateTentativeBalance(section, {
+                  mainIncome,
+                  sideIncome,
+                  otherSideIncome,
+                  spouseIncome,
+                  pensionIncome,
+                  spousePensionIncome,
+                  personalInvestmentIncome,
+                  personalLifeEventIncome,
+                  livingExpense,
+                  housingExpense,
+                  educationExpense,
+                  otherPersonalExpense,
+                  personalLifeEventExpense,
+                  personalLoanRepayment,
+                  corporateIncome,
+                  corporateOtherIncome,
+                  corporateInvestmentIncome,
+                  corporateLifeEventIncome,
+                  corporateExpense,
+                  corporateOtherExpense,
+                  corporateCost,
+                  corporateLifeEventExpense,
+                  corporateLoanRepayment,
+                  parameters,
+                });
+
                 let newInvestmentAmount = 0;
-
-                // 投資額を除いた仮収支を計算
-                const tentativeBalance = calculateTentativeBalance(
-                  section, 
-                  {
-                    // 個人収入データ
-                    mainIncome, sideIncome, otherSideIncome, spouseIncome,
-                    pensionIncome, spousePensionIncome, personalInvestmentIncome, personalLifeEventIncome,
-                    // 個人支出データ  
-                    livingExpense, housingExpense, educationExpense, otherPersonalExpense,
-                    personalLifeEventExpense, personalLoanRepayment,
-                    // 法人収入データ
-                    corporateIncome, corporateOtherIncome, corporateInvestmentIncome, corporateLifeEventIncome,
-                    // 法人支出データ
-                    corporateExpense, corporateOtherExpense, corporateCost,
-                    corporateLifeEventExpense, corporateLoanRepayment,
-                    // 税金計算用
-                    parameters
-                  }
-                );
-
-                // 仮収支がプラスの場合のみ投資を実行
-                if (tentativeBalance > 0) {
-                  newInvestmentAmount = Math.min(
-                    incomeAmount * (investmentRatio / 100),
-                    maxInvestmentAmount
-                  );
+                if (tentative > 0) {
+                  newInvestmentAmount = Math.min(incomeAmount * (ratio / 100), maxAmt);
                 }
-                
-                // 投資額を集計（キャッシュフロー表示用）
-                if (section === 'personal') {
-                  personalInvestmentAmount += newInvestmentAmount;
-                } else {
-                  corporateInvestmentAmount += newInvestmentAmount;
-                }
-                
-                // 累積計算：前年残高 + 運用収益 + 当年新規投資
+
+                if (section === 'personal') personalInvestmentAmount += newInvestmentAmount;
+                else corporateInvestmentAmount += newInvestmentAmount;
+
                 asset.amounts[year] = previousBalance + assetInvestmentIncome + newInvestmentAmount;
               } else {
-                // 収入が紐付けられていない場合でも、前年残高と運用収益は計算
                 asset.amounts[year] = previousBalance + assetInvestmentIncome;
               }
             }
           });
         });
 
-        // === 7. 負債総額計算 ===
+        // 7) 負債総額（現行のまま：残高未更新のため多くが0でも仕様維持）
         let personalLiabilityTotal = 0;
         let corporateLiabilityTotal = 0;
-
-        liabilityData.personal.forEach((liability: any) => {
-          personalLiabilityTotal += Math.abs(liability.amounts[year] || 0);
+        liabilityData.personal.forEach((l) => {
+          personalLiabilityTotal += Math.abs(l.amounts[year] || 0);
+        });
+        liabilityData.corporate.forEach((l) => {
+          corporateLiabilityTotal += Math.abs(l.amounts[year] || 0);
         });
 
-        liabilityData.corporate.forEach((liability: any) => {
-          corporateLiabilityTotal += Math.abs(liability.amounts[year] || 0);
-        });
-
-        // === 8. 法人税計算（新機能） ===
-        
-        // 法人の税引き前利益を計算
-        const corporateTotalIncome = corporateIncome + corporateOtherIncome + corporateInvestmentIncome + corporateLifeEventIncome;
-        const corporateTotalExpense = corporateExpense + corporateOtherExpense + corporateCost + corporateInvestmentAmount + 
-          corporateLifeEventExpense + corporateLoanRepayment;
+        // 8) 法人税
+        const corporateTotalIncome =
+          corporateIncome + corporateOtherIncome + corporateInvestmentIncome + corporateLifeEventIncome;
+        const corporateTotalExpense =
+          corporateExpense +
+          corporateOtherExpense +
+          corporateCost +
+          corporateInvestmentAmount +
+          corporateLifeEventExpense +
+          corporateLoanRepayment;
         const corporatePretaxProfit = corporateTotalIncome - corporateTotalExpense;
-
-        // 法人税の計算
         const taxResult = calculateCorporateTax(corporatePretaxProfit, parameters.corporateTaxSettings);
 
-        // === 9. 収支とバランス計算（資産ページの資産を考慮） ===
-        const personalTotalIncome = mainIncome + sideIncome + otherSideIncome + spouseIncome + 
-          pensionIncome + spousePensionIncome + personalInvestmentIncome + personalLifeEventIncome;
-        const personalTotalExpense = livingExpense + housingExpense + educationExpense + 
-          otherPersonalExpense + personalInvestmentAmount + personalLifeEventExpense + personalLoanRepayment;
+        // 9) 収支
+        const personalTotalIncome =
+          mainIncome +
+          sideIncome +
+          otherSideIncome +
+          spouseIncome +
+          pensionIncome +
+          spousePensionIncome +
+          personalInvestmentIncome +
+          personalLifeEventIncome;
+        const personalTotalExpense =
+          livingExpense +
+          housingExpense +
+          educationExpense +
+          otherPersonalExpense +
+          personalInvestmentAmount +
+          personalLifeEventExpense +
+          personalLoanRepayment;
         const personalBalance = personalTotalIncome - personalTotalExpense;
 
-        // 法人収支から税金を差し引く
         const corporateBalance = taxResult.aftertaxProfit;
 
-        // === 10. 資産更新（資産ページの資産も含めて総資産を計算） ===
+        // 10) 総資産（現行維持。※投資益の二重乗り問題は未変更）
         personalTotalAssets += personalBalance;
         corporateTotalAssets += corporateBalance;
 
-        // 資産ページで設定された資産の現在値を総資産に加算
         let currentPersonalAssetPageTotal = 0;
         let currentCorporateAssetPageTotal = 0;
+        workingAssetData.personal.forEach((a) => (currentPersonalAssetPageTotal += a.amounts[year] || 0));
+        workingAssetData.corporate.forEach((a) => (currentCorporateAssetPageTotal += a.amounts[year] || 0));
 
-        workingAssetData.personal.forEach((asset: any) => {
-          currentPersonalAssetPageTotal += asset.amounts[year] || 0;
-        });
-
-        workingAssetData.corporate.forEach((asset: any) => {
-          currentCorporateAssetPageTotal += asset.amounts[year] || 0;
-        });
-
-        // 総資産に資産ページの資産を反映
-        // 初年度は初期資産がすでに加算されているので、2年目以降は差分を加算
         if (yearIndex > 0) {
-          let previousPersonalAssetPageTotal = 0;
-          let previousCorporateAssetPageTotal = 0;
+          let prevPersonal = 0;
+          let prevCorporate = 0;
+          workingAssetData.personal.forEach((a) => (prevPersonal += a.amounts[year - 1] || 0));
+          workingAssetData.corporate.forEach((a) => (prevCorporate += a.amounts[year - 1] || 0));
 
-          workingAssetData.personal.forEach((asset: any) => {
-            previousPersonalAssetPageTotal += asset.amounts[year - 1] || 0;
-          });
-
-          workingAssetData.corporate.forEach((asset: any) => {
-            previousCorporateAssetPageTotal += asset.amounts[year - 1] || 0;
-          });
-
-          // 資産ページの資産増加分を総資産に反映
-          personalTotalAssets += (currentPersonalAssetPageTotal - previousPersonalAssetPageTotal);
-          corporateTotalAssets += (currentCorporateAssetPageTotal - previousCorporateAssetPageTotal);
+          personalTotalAssets += currentPersonalAssetPageTotal - prevPersonal;
+          corporateTotalAssets += currentCorporateAssetPageTotal - prevCorporate;
         }
 
-        // 投資資産の更新（収入投資分を含む）
         const currentPersonalInvestmentAssets = currentPersonalAssetPageTotal;
         const currentCorporateInvestmentAssets = currentCorporateAssetPageTotal;
 
-        // 純資産計算
         const personalNetAssets = personalTotalAssets - personalLiabilityTotal;
         const corporateNetAssets = corporateTotalAssets - corporateLiabilityTotal;
 
-        // === 11. キャッシュフローデータ保存（法人税情報追加） ===
+        // 11) 保存
         newCashFlow[year] = {
           mainIncome: Math.round(mainIncome * 10) / 10,
           sideIncome: Math.round((sideIncome + otherSideIncome) * 10) / 10,
@@ -1231,7 +1238,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
           personalNetAssets: Math.round(personalNetAssets * 10) / 10,
           corporateIncome: Math.round(corporateIncome * 10) / 10,
           corporateOtherIncome: Math.round(corporateOtherIncome * 10) / 10,
-          corporateExpense: Math.round((corporateExpense + corporateCost) * 10) / 10, // 原価を含める
+          corporateExpense: Math.round((corporateExpense + corporateCost) * 10) / 10,
           corporateOtherExpense: Math.round(corporateOtherExpense * 10) / 10,
           corporateLoanRepayment: Math.round(corporateLoanRepayment * 10) / 10,
           corporateBalance: Math.round(corporateBalance * 10) / 10,
@@ -1241,7 +1248,6 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
           corporateInvestmentAmount: Math.round(corporateInvestmentAmount * 10) / 10,
           corporateInvestmentIncome: Math.round(corporateInvestmentIncome * 10) / 10,
           corporateTotalInvestmentAssets: Math.round(currentCorporateInvestmentAssets * 10) / 10,
-          // 法人税関連データ
           corporatePretaxProfit: taxResult.pretaxProfit,
           corporateTax: taxResult.corporateTax,
           localCorporateTax: taxResult.localCorporateTax,
@@ -1253,11 +1259,14 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
         };
       });
 
-      // 更新された経費データを保存
-      set({ expenseData: workingExpenseData });
-      set({ cashFlow: newCashFlow });
+      // ★最後にset：working*を正式反映（直接ミューテ禁止のため）
+      set({
+        incomeData: workingIncomeData,
+        expenseData: workingExpenseData,
+        cashFlow: newCashFlow,
+      });
     } catch (error) {
-      console.error("Error in syncCashFlowFromFormData:", error);
+      console.error('Error in syncCashFlowFromFormData:', error);
     }
   },
 
@@ -1270,30 +1279,27 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
     set({ incomeData: data });
     get().initializeCashFlow();
   },
-  
+
   setExpenseData: (data) => {
     set({ expenseData: data });
     get().initializeCashFlow();
   },
-  
+
   setAssetData: (data) => {
     set({ assetData: data });
     get().initializeCashFlow();
   },
-  
+
   setLiabilityData: (data) => {
     set({ liabilityData: data });
     get().initializeCashFlow();
   },
 
-  // ライフイベント関連のアクション
   addLifeEvent: (event) => {
-    set((state) => ({
-      lifeEvents: [...state.lifeEvents, event],
-    }));
+    set((state) => ({ lifeEvents: [...state.lifeEvents, event] }));
     get().initializeCashFlow();
   },
-  
+
   removeLifeEvent: (index) => {
     set((state) => ({
       lifeEvents: state.lifeEvents.filter((_, i) => i !== index),
@@ -1301,19 +1307,14 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
     get().initializeCashFlow();
   },
 
-  // History actions
   addHistoryEntry: (entry) => {
     set((state) => ({
-      history: [
-        ...state.history,
-        { ...entry, timestamp: Date.now() },
-      ],
+      history: [...state.history, { ...entry, timestamp: Date.now() }],
     }));
   },
-  
+
   clearHistory: () => set({ history: [] }),
 
-  // 法人税設定の更新
   updateCorporateTaxSettings: (settings) => {
     set((state) => ({
       parameters: {
@@ -1324,11 +1325,9 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
         },
       },
     }));
-    // 法人税設定変更時にキャッシュフローを再計算
     get().initializeCashFlow();
   },
 
-  // LocalStorage
   saveToLocalStorage: () => {
     const state = get();
     try {
@@ -1346,7 +1345,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
       console.error('Failed to save to localStorage:', error);
     }
   },
-  
+
   loadFromLocalStorage: () => {
     try {
       const savedState = localStorage.getItem('simulatorState');
@@ -1356,8 +1355,8 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
           basicInfo: data.basicInfo,
           parameters: {
             ...data.parameters,
-            // 法人税設定がない場合はデフォルト値を設定
-            corporateTaxSettings: data.parameters?.corporateTaxSettings || DEFAULT_CORPORATE_TAX_SETTINGS,
+            corporateTaxSettings:
+              data.parameters?.corporateTaxSettings || DEFAULT_CORPORATE_TAX_SETTINGS,
           },
           incomeData: data.incomeData,
           expenseData: data.expenseData,
@@ -1372,101 +1371,48 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
     }
   },
 
-  // initializeFormData 関数（インポート対応修正版）
+  // 初期化（元の挙動を維持しつつ、問題2/4対応 & 法人ID101/102）
   initializeFormData: () => {
     const state = get();
     const { basicInfo, parameters, incomeData: existingIncomeData, expenseData: existingExpenseData } = state;
-    
-    // インポート済みデータがある場合はスキップ
-    if (existingIncomeData && existingIncomeData.personal && existingIncomeData.personal.length > 0) {
-      // 既存データに値が入っている場合は初期化をスキップ
-      const hasIncomeData = existingIncomeData.personal.some(item => 
-        Object.keys(item.amounts || {}).length > 0 || 
-        Object.keys(item._originalAmounts || {}).length > 0
+
+    // 既存入力がある場合はスキップ（元の仕様）
+    if (existingIncomeData?.personal?.length) {
+      const hasIncomeData = existingIncomeData.personal.some(
+        (item) =>
+          Object.keys(item.amounts || {}).length > 0 ||
+          Object.keys(item._originalAmounts || {}).length > 0
       );
-      const hasExpenseData = existingExpenseData.personal.some(item => 
-        Object.keys(item.amounts || {}).length > 0 || 
-        Object.keys(item._rawAmounts || {}).length > 0
+      const hasExpenseData = existingExpenseData.personal.some(
+        (item) =>
+          Object.keys(item.amounts || {}).length > 0 ||
+          Object.keys(item._rawAmounts || {}).length > 0
       );
-     if (hasIncomeData || hasExpenseData) {
+      if (hasIncomeData || hasExpenseData) {
         console.log('既存データが検出されたため、初期化をスキップします');
         return;
       }
     }
-    
-    const yearsUntilDeath = basicInfo.deathAge - basicInfo.currentAge;
-    const years = Array.from(
-      { length: yearsUntilDeath + 1 },
-      (_, i) => basicInfo.startYear + i
-    );
 
-    // 収入データの初期化
-    const newIncomeData = { 
+    const yearsUntilDeath = basicInfo.deathAge - basicInfo.currentAge;
+    const years = Array.from({ length: yearsUntilDeath + 1 }, (_, i) => basicInfo.startYear + i);
+
+    // 収入（法人IDは '101','102'）
+    const newIncomeData: IncomeSection = {
       personal: [
-        { 
-          id: '1', 
-          name: '給与収入', 
-          type: 'income', 
-          category: 'income',
-          amounts: {}, 
-          investmentRatio: 0,
-          maxInvestmentAmount: 0
-        },
-        { 
-          id: '2', 
-          name: '事業収入', 
-          type: 'profit', 
-          category: 'income',
-          amounts: {}, 
-          investmentRatio: 0,
-          maxInvestmentAmount: 0
-        },
-        { 
-          id: '3', 
-          name: '副業収入', 
-          type: 'side', 
-          category: 'income',
-          amounts: {}, 
-          investmentRatio: 0,
-          maxInvestmentAmount: 0
-        },
-        { 
-          id: '4', 
-          name: '年金収入', 
-          type: 'income', 
-          category: 'income',
-          amounts: {}, 
-          investmentRatio: 0,
-          maxInvestmentAmount: 0,
-          isAutoCalculated: true
-        },
+        { id: '1', name: '給与収入', type: 'income', category: 'income', amounts: {}, investmentRatio: 0, maxInvestmentAmount: 0 },
+        { id: '2', name: '事業収入', type: 'profit', category: 'income', amounts: {}, investmentRatio: 0, maxInvestmentAmount: 0 },
+        { id: '3', name: '副業収入', type: 'side', category: 'income', amounts: {}, investmentRatio: 0, maxInvestmentAmount: 0 },
+        { id: '4', name: '年金収入', type: 'income', category: 'income', amounts: {}, investmentRatio: 0, maxInvestmentAmount: 0, isAutoCalculated: true },
       ],
       corporate: [
-        { 
-          id: '1', 
-          name: '売上', 
-          type: 'income', 
-          category: 'income',
-          amounts: {}, 
-          investmentRatio: 0,
-          maxInvestmentAmount: 0
-        },
-        { 
-          id: '2', 
-          name: 'その他収入', 
-          type: 'income', 
-          category: 'income',
-          amounts: {}, 
-          investmentRatio: 0,
-          maxInvestmentAmount: 0
-        },
+        { id: '101', name: '売上', type: 'income', category: 'income', amounts: {}, investmentRatio: 0, maxInvestmentAmount: 0 },
+        { id: '102', name: 'その他収入', type: 'income', category: 'income', amounts: {}, investmentRatio: 0, maxInvestmentAmount: 0 },
       ],
     };
 
-    // 既婚または結婚予定の場合、配偶者年金も追加
     if (basicInfo.maritalStatus !== 'single') {
-      const spousePensionItem = newIncomeData.personal.find(item => item.name === '配偶者年金収入');
-      
+      const spousePensionItem = newIncomeData.personal.find((i) => i.name === '配偶者年金収入');
       if (!spousePensionItem) {
         newIncomeData.personal.push({
           id: '5',
@@ -1476,16 +1422,17 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
           amounts: {},
           investmentRatio: 0,
           maxInvestmentAmount: 0,
-          isAutoCalculated: true
+          isAutoCalculated: true,
         });
       }
     }
 
-    // 配偶者の収入がある場合は追加
-    if (basicInfo.maritalStatus !== 'single' && basicInfo.spouseInfo?.occupation 
-        && basicInfo.spouseInfo.occupation !== 'homemaker') {
-      const spouseIncomeItem = newIncomeData.personal.find(item => item.name === '配偶者収入');
-      
+    if (
+      basicInfo.maritalStatus !== 'single' &&
+      basicInfo.spouseInfo?.occupation &&
+      basicInfo.spouseInfo.occupation !== 'homemaker'
+    ) {
+      const spouseIncomeItem = newIncomeData.personal.find((i) => i.name === '配偶者収入');
       if (!spouseIncomeItem) {
         newIncomeData.personal.push({
           id: String(newIncomeData.personal.length + 1),
@@ -1494,50 +1441,39 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
           category: 'income',
           amounts: {},
           investmentRatio: 0,
-          maxInvestmentAmount: 0
+          maxInvestmentAmount: 0,
         });
       }
     }
 
-    // 支出データの初期化
-    const newExpenseData = { ...state.expenseData };
-    
-    // 支出データの初期値にインフレ率を適用する処理
-    years.forEach(year => {
+    // 支出（住居費は startYear 基準で算出）
+    const newExpenseData: ExpenseSection = { ...state.expenseData };
+
+    years.forEach((year) => {
       const yearsSinceStart = year - basicInfo.startYear;
-      
-      // 生活費設定
-      const livingExpenseItem = newExpenseData.personal.find(item => item.name === '生活費');
-      if (livingExpenseItem) {
+
+      const living = newExpenseData.personal.find((i) => i.name === '生活費');
+      if (living) {
         const baseAmount = basicInfo.monthlyLivingExpense * 12;
-        const inflationFactor = Math.pow(1 + parameters.inflationRate / 100, yearsSinceStart);
-        const inflatedAmount = Math.round(baseAmount * inflationFactor * 10) / 10;
-        
-        livingExpenseItem._rawAmounts = {
-          ...(livingExpenseItem._rawAmounts || {}),
-          [year]: baseAmount
-        };
-        livingExpenseItem.amounts[year] = inflatedAmount;
+        const infl = Math.pow(1 + (parameters.inflationRate || 0) / 100, yearsSinceStart);
+        const inflated = Math.round(baseAmount * infl * 10) / 10;
+        living._rawAmounts = { ...(living._rawAmounts || {}), [year]: baseAmount };
+        living.amounts[year] = inflated;
       }
 
-      // 住居費設定
-      const housingExpenseItem = newExpenseData.personal.find(item => item.name === '住居費');
-      if (housingExpenseItem) {
-        const baseAmount = calculateHousingExpense(basicInfo.housingInfo, year);
-        housingExpenseItem._rawAmounts = {
-          ...(housingExpenseItem._rawAmounts || {}),
-          [year]: baseAmount
-        };
-        housingExpenseItem.amounts[year] = baseAmount;
+      const housing = newExpenseData.personal.find((i) => i.name === '住居費');
+      if (housing) {
+        // ★startYear を渡す
+        const baseAmount = calculateHousingExpense(basicInfo.housingInfo, year, basicInfo.startYear);
+        housing._rawAmounts = { ...(housing._rawAmounts || {}), [year]: baseAmount };
+        housing.amounts[year] = baseAmount;
       }
 
-      // 教育費設定（元のファイルから抽出した部分）
-      const educationExpenseItem = newExpenseData.personal.find(item => item.name === '教育費');
-      if (educationExpenseItem) {
-        educationExpenseItem.category = 'education';
-        educationExpenseItem.type = 'education';
-        
-        const baseAmount = calculateEducationExpense(
+      const education = newExpenseData.personal.find((i) => i.name === '教育費');
+      if (education) {
+        education.category = 'education';
+        education.type = 'education';
+        const base = calculateEducationExpense(
           basicInfo.children,
           basicInfo.plannedChildren,
           year,
@@ -1545,30 +1481,33 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
           basicInfo.startYear,
           parameters.educationCostIncreaseRate
         );
-        educationExpenseItem._rawAmounts = {
-          ...(educationExpenseItem._rawAmounts || {}),
-          [year]: baseAmount
-        };
-        educationExpenseItem.amounts[year] = baseAmount;
+        education._rawAmounts = { ...(education._rawAmounts || {}), [year]: base };
+        education.amounts[year] = base;
       }
     });
 
-    // 資産データの初期化
-    const newAssetData = { ...state.assetData };
+    // 資産（元の初期化）
+    const newAssetData: AssetSection = { ...state.assetData };
     if (basicInfo.housingInfo.type === 'own' && basicInfo.housingInfo.own) {
-      const realEstateItem = newAssetData.personal.find(item => item.name === '不動産');
+      const realEstateItem = newAssetData.personal.find((i) => i.name === '不動産');
       if (realEstateItem) {
-        realEstateItem.amounts[basicInfo.housingInfo.own.purchaseYear] = 
+        realEstateItem.amounts[basicInfo.housingInfo.own.purchaseYear] =
           basicInfo.housingInfo.own.purchasePrice;
       }
     }
 
-    // 負債データの初期化
-    const newLiabilityData = { ...state.liabilityData };
+    // 負債（住宅ローン条件を同期、ただし autoCalculate=false は維持）
+    const newLiabilityData: LiabilitySection = { ...state.liabilityData };
     if (basicInfo.housingInfo.type === 'own' && basicInfo.housingInfo.own) {
-      const loanItem = newLiabilityData.personal.find(item => item.name === 'ローン');
+      const loanItem = newLiabilityData.personal.find((i) => i.name === 'ローン');
       if (loanItem) {
-        loanItem.amounts[basicInfo.housingInfo.own.purchaseYear] = 
+        loanItem.interestRate = basicInfo.housingInfo.own.interestRate;
+        loanItem.termYears = basicInfo.housingInfo.own.loanTermYears;
+        loanItem.startYear = basicInfo.housingInfo.own.purchaseYear;
+        loanItem.originalAmount = basicInfo.housingInfo.own.loanAmount;
+        loanItem.repaymentType = loanItem.repaymentType || 'equal_payment';
+        loanItem.autoCalculate = false; // 住宅ローンは住居費で一元計上（現行維持）
+        loanItem.amounts[basicInfo.housingInfo.own.purchaseYear] =
           basicInfo.housingInfo.own.loanAmount;
       }
     }

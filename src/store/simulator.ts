@@ -1191,9 +1191,10 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
 
         const corporateBalance = taxResult.aftertaxProfit;
 
-        // 10) 総資産（現行維持。※投資益の二重乗り問題は未変更）
-        personalTotalAssets += personalBalance;
-        corporateTotalAssets += corporateBalance;
+        // 10) 資産更新（投資収益は資産ページ差分で既に反映されるため、ここでは控除）
+        personalTotalAssets  += (personalBalance  - personalInvestmentIncome);
+        corporateTotalAssets += (corporateBalance - corporateInvestmentIncome);
+
 
         let currentPersonalAssetPageTotal = 0;
         let currentCorporateAssetPageTotal = 0;

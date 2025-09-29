@@ -1,22 +1,25 @@
-// Tax calculation utilities
+// ==========================
+// calculations.ts（完全差し替え版）
+// ==========================
+
+// ---- Tax calculation utilities ----
 export function calculateSalaryDeduction(annualIncome: number): number {
-  // Convert from 万円 to actual yen for calculation
+  // 万円 → 円
   const incomeInYen = annualIncome * 10000;
-  
+
   if (incomeInYen <= 8_500_000) {
-    const deduction = Math.min(Math.max((incomeInYen * 0.3) + 80_000, 550_000), 1_950_000);
-    // Convert back to 万円
+    const deduction = Math.min(Math.max(incomeInYen * 0.3 + 80_000, 550_000), 1_950_000);
+    // 円 → 万円（切り捨て）
     return Math.floor(deduction / 10000);
   }
-  // Convert 1,950,000 yen to 万円
+  // 1,950,000 円 → 195 万円
   return 195;
 }
 
 export function calculateIncomeTax(taxableIncome: number): number {
-  // Convert from 万円 to actual yen for calculation
+  // 万円 → 円
   const taxableIncomeInYen = taxableIncome * 10000;
-  
-  // Tax brackets in actual yen
+
   const brackets = [
     { limit: 1_950_000, rate: 0.05, deduction: 0 },
     { limit: 3_300_000, rate: 0.10, deduction: 97_500 },
@@ -30,8 +33,8 @@ export function calculateIncomeTax(taxableIncome: number): number {
   const bracket = brackets.find(b => taxableIncomeInYen <= b.limit);
   if (!bracket) return 0;
 
-  const taxInYen = Math.floor((taxableIncomeInYen * bracket.rate) - bracket.deduction);
-  // Convert back to 万円
+  const taxInYen = Math.floor(taxableIncomeInYen * bracket.rate - bracket.deduction);
+  // 円 → 万円（切り捨て）
   return Math.floor(taxInYen / 10000);
 }
 
@@ -40,53 +43,44 @@ export function calculateSocialInsuranceRate(annualIncome: number): number {
   return annualIncome < 850 ? 0.15 : 0.077;
 }
 
-// === 法人税計算関数（新機能） ===
+// ---- Corporate tax (法人税) ----
 
-// 法人税設定の型定義
 export interface CorporateTaxSettings {
-  corporateTaxRateLow: number;           // 800万円以下の税率（デフォルト：15%）
-  corporateTaxRateHigh: number;          // 800万円超の税率（デフォルト：23.2%）
-  corporateTaxThreshold: number;         // 閾値（デフォルト：800万円）
-  localCorporateTaxRate: number;         // 地方法人税率（デフォルト：10.3%）
-  residentTaxEqualRate: number;          // 法人住民税（均等割）（デフォルト：7万円）
-  residentTaxProportionalRate: number;   // 法人住民税（法人税割）（デフォルト：7.0%）
+  corporateTaxRateLow: number;         // 800万円以下の税率（例：15%）
+  corporateTaxRateHigh: number;        // 800万円超の税率（例：23.2%）
+  corporateTaxThreshold: number;       // 閾値（例：800万円）
+  localCorporateTaxRate: number;       // 地方法人税率（例：10.3%）
+  residentTaxEqualRate: number;        // 法人住民税（均等割／万円）（例：7）
+  residentTaxProportionalRate: number; // 法人住民税（法人税割）（例：7.0%）
 }
 
-// デフォルトの法人税設定
 export const DEFAULT_CORPORATE_TAX_SETTINGS: CorporateTaxSettings = {
-  corporateTaxRateLow: 15.0,        // 15%
-  corporateTaxRateHigh: 23.2,       // 23.2%
-  corporateTaxThreshold: 800,       // 800万円
-  localCorporateTaxRate: 10.3,      // 10.3%
-  residentTaxEqualRate: 7,          // 7万円（均等割）
-  residentTaxProportionalRate: 7.0, // 7.0%（法人税割）
+  corporateTaxRateLow: 15.0,
+  corporateTaxRateHigh: 23.2,
+  corporateTaxThreshold: 800,
+  localCorporateTaxRate: 10.3,
+  residentTaxEqualRate: 7,
+  residentTaxProportionalRate: 7.0,
 };
 
-// 法人税の計算結果
 export interface CorporateTaxResult {
-  pretaxProfit: number;                 // 税引き前利益
-  corporateTax: number;                 // 法人税
-  localCorporateTax: number;            // 地方法人税
-  residentTaxEqual: number;             // 法人住民税（均等割）
-  residentTaxProportional: number;      // 法人住民税（法人税割）
-  totalTax: number;                     // 税金合計
-  aftertaxProfit: number;               // 税引き後利益
-  effectiveTaxRate: number;             // 実効税率（%）
+  pretaxProfit: number;              // 税引き前利益（万円）
+  corporateTax: number;              // 法人税（万円）
+  localCorporateTax: number;         // 地方法人税（万円）
+  residentTaxEqual: number;          // 法人住民税（均等割／万円）
+  residentTaxProportional: number;   // 法人住民税（法人税割／万円）
+  totalTax: number;                  // 税金合計（万円）
+  aftertaxProfit: number;            // 税引き後利益（万円）
+  effectiveTaxRate: number;          // 実効税率（%）
 }
 
-// 法人税の計算
 export function calculateCorporateTax(
-  pretaxProfit: number, // 税引き前利益（万円）
+  pretaxProfit: number, // 万円
   settings: CorporateTaxSettings = DEFAULT_CORPORATE_TAX_SETTINGS
 ): CorporateTaxResult {
-  // 法人住民税（均等割）は利益に関係なく発生
   const residentTaxEqual = settings.residentTaxEqualRate;
 
-  // 利益が0以下の場合は均等割のみ
   if (pretaxProfit <= 0) {
-    // 実効税率の計算：税引き前利益が0の場合は0%、マイナスの場合も0%として扱う
-    const effectiveTaxRate = 0;
-    
     return {
       pretaxProfit,
       corporateTax: 0,
@@ -95,39 +89,26 @@ export function calculateCorporateTax(
       residentTaxProportional: 0,
       totalTax: residentTaxEqual,
       aftertaxProfit: pretaxProfit - residentTaxEqual,
-      effectiveTaxRate,
+      effectiveTaxRate: 0,
     };
   }
 
-  // 法人税の計算（累進税率）
   let corporateTax = 0;
-  
   if (pretaxProfit <= settings.corporateTaxThreshold) {
-    // 閾値以下：軽減税率を適用
     corporateTax = pretaxProfit * (settings.corporateTaxRateLow / 100);
   } else {
-    // 閾値超過：累進計算
-    corporateTax = 
+    corporateTax =
       settings.corporateTaxThreshold * (settings.corporateTaxRateLow / 100) +
       (pretaxProfit - settings.corporateTaxThreshold) * (settings.corporateTaxRateHigh / 100);
   }
 
-  // 地方法人税の計算（法人税額の10.3%）
   const localCorporateTax = corporateTax * (settings.localCorporateTaxRate / 100);
-
-  // 法人住民税（法人税割）の計算（法人税額に対する比例税率）
   const residentTaxProportional = corporateTax * (settings.residentTaxProportionalRate / 100);
 
-  // 税金合計
   const totalTax = corporateTax + localCorporateTax + residentTaxEqual + residentTaxProportional;
-
-  // 税引き後利益
   const aftertaxProfit = pretaxProfit - totalTax;
-
-  // 実効税率（税引き前利益が0の場合は0%として扱う）
   const effectiveTaxRate = pretaxProfit > 0 ? (totalTax / pretaxProfit) * 100 : 0;
 
-  // 小数点第1位で四捨五入
   return {
     pretaxProfit: Math.round(pretaxProfit * 10) / 10,
     corporateTax: Math.round(corporateTax * 10) / 10,
@@ -140,81 +121,100 @@ export function calculateCorporateTax(
   };
 }
 
-// Housing cost calculation utilities
+// ---- Housing cost calculation utilities ----
+
+// ★元利均等の月返済額（単位は呼び出し側に合わせて：ここでは“万円”で計算）
 export function calculateMonthlyMortgage(
-  loanAmount: number,
-  interestRate: number,
-  termYears: number
+  loanAmount: number,  // 万円（元本）
+  interestRate: number, // 年利（%）
+  termYears: number     // 年
 ): number {
-  const monthlyRate = interestRate / 100 / 12;
-  const numberOfPayments = termYears * 12;
-  
+  const monthlyRate = (interestRate || 0) / 100 / 12;
+  const numberOfPayments = Math.max(1, termYears * 12);
+
   if (monthlyRate === 0) {
-    return loanAmount / numberOfPayments;
+    return Number((loanAmount / numberOfPayments).toFixed(1));
   }
 
-  const monthlyPayment = loanAmount * 
-    (monthlyRate * Math.pow(1 + monthlyRate, numberOfPayments)) /
-    (Math.pow(1 + monthlyRate, numberOfPayments) - 1);
+  const pow = Math.pow(1 + monthlyRate, numberOfPayments);
+  const monthlyPayment = loanAmount * (monthlyRate * pow) / (pow - 1);
 
   return Number(monthlyPayment.toFixed(1));
 }
 
+// ★修正：第3引数 startYear を追加し、賃貸の経過年を startYear 基準に統一
 export function calculateHousingExpense(
   housingInfo: {
     type: 'rent' | 'own';
     rent?: {
-      monthlyRent: number;
-      annualIncreaseRate: number;
-      renewalFee: number;
-      renewalInterval: number;
+      monthlyRent: number;        // 万円/月
+      annualIncreaseRate: number; // %
+      renewalFee: number;         // 万円/回
+      renewalInterval: number;    // 年
     };
     own?: {
       purchaseYear: number;
-      purchasePrice: number;
-      loanAmount: number;
-      interestRate: number;
-      loanTermYears: number;
-      maintenanceCostRate: number;
+      purchasePrice: number;      // 万円
+      loanAmount: number;         // 万円
+      interestRate: number;       // 年利（%）
+      loanTermYears: number;      // 年
+      maintenanceCostRate: number;// %（購入価格×率）
     };
   },
-  currentYear: number
+  currentYear: number,
+  startYear: number // ★追加：シミュレーション開始年
 ): number {
   if (housingInfo.type === 'rent' && housingInfo.rent) {
-    const yearsSinceStart = currentYear - new Date().getFullYear();
-    const annualRent = housingInfo.rent.monthlyRent * 12;
-    const renewalYears = Math.floor(yearsSinceStart / housingInfo.rent.renewalInterval);
-    const renewalCost = renewalYears * housingInfo.rent.renewalFee;
-    const annualRentWithIncrease = annualRent * 
-      Math.pow(1 + housingInfo.rent.annualIncreaseRate / 100, yearsSinceStart);
+    const r = housingInfo.rent;
+    const yearsSinceStart = currentYear - startYear; // ← ここが重要（実行時の西暦は使わない）
+    const baseAnnualRent = (r.monthlyRent || 0) * 12;
+
+    // 家賃の年次増加（インフレ）を startYear 基準で適用
+    const annualRentWithIncrease =
+      baseAnnualRent * Math.pow(1 + (r.annualIncreaseRate || 0) / 100, Math.max(0, yearsSinceStart));
+
+    // 更新料（renewalInterval ごとに加算／0年目はなし）
+    let renewalCost = 0;
+    if ((r.renewalInterval || 0) > 0 && (r.renewalFee || 0) > 0) {
+      const renewalCount = Math.floor(Math.max(0, yearsSinceStart) / r.renewalInterval);
+      renewalCost = renewalCount * r.renewalFee;
+    }
+
     return Number((annualRentWithIncrease + renewalCost).toFixed(1));
-  } else if (housingInfo.type === 'own' && housingInfo.own) {
-    if (currentYear < housingInfo.own.purchaseYear) {
+  }
+
+  if (housingInfo.type === 'own' && housingInfo.own) {
+    const o = housingInfo.own;
+
+    // 購入前年は 0
+    if (currentYear < o.purchaseYear) {
       return 0;
     }
 
+    // 住宅ローン返済（元利均等）— 現行ロジック維持
     const monthlyMortgage = calculateMonthlyMortgage(
-      housingInfo.own.loanAmount,
-      housingInfo.own.interestRate,
-      housingInfo.own.loanTermYears
+      o.loanAmount,
+      o.interestRate,
+      o.loanTermYears
     );
     const annualMortgage = monthlyMortgage * 12;
-    const maintenanceCost = housingInfo.own.purchasePrice * 
-      (housingInfo.own.maintenanceCostRate / 100);
-    
-    const loanEndYear = housingInfo.own.purchaseYear + housingInfo.own.loanTermYears;
+
+    // 維持費（購入価格 × 率）— 現行ロジック維持
+    const maintenanceCost = o.purchasePrice * (o.maintenanceCostRate / 100);
+
+    // 返済終了後は維持費のみ
+    const loanEndYear = o.purchaseYear + o.loanTermYears;
     if (currentYear >= loanEndYear) {
-      return maintenanceCost;
+      return Number(maintenanceCost.toFixed(1));
     }
-    
+
     return Number((annualMortgage + maintenanceCost).toFixed(1));
   }
-  
+
   return 0;
 }
 
-// Pension calculation utilities
-// この関数は現在使用されていませんが、念のため修正しておきます
+// ---- Pension calculation utilities（簡易版：互換維持のため残置）----
 
 export function calculatePension(
   annualIncome: number,
@@ -224,138 +224,80 @@ export function calculatePension(
   occupation: string = 'company_employee',
   willWorkAfterPension: boolean = false
 ): number {
-  // For occupations without welfare pension, return basic pension only
-  if (occupation === 'part_time_without_pension' || 
-      occupation === 'self_employed' || 
-      occupation === 'homemaker') {
-    // 国民年金の基礎年金額のみ（約78万円/年）
-    const basicPensionYearly = 780900; // 2025年度の基礎年金満額
-    
-    // 加入期間（月数）= 20歳から60歳または現在年齢までの期間（上限40年=480ヶ月）
-    const workingYears = Math.min(workEndAge - workStartAge, 40); // 上限40年
+  // 厚生年金に加入しない職種は基礎年金のみ
+  if (
+    occupation === 'part_time_without_pension' ||
+    occupation === 'self_employed' ||
+    occupation === 'homemaker'
+  ) {
+    const basicPensionYearly = 780_900; // 円/年（満額）
+    const workingYears = Math.min(workEndAge - workStartAge, 40);
     const workingMonths = workingYears * 12;
-    
-    // 加入期間比率（最大480ヶ月=40年で上限）
     const ratio = Math.min(workingMonths / 480, 1);
-    
-    // 基礎年金（満額×加入期間比率）
     const basicPension = basicPensionYearly * ratio;
-    
-    // 繰上げ・繰下げ調整
+
+    // 繰上げ・繰下げ
     let adjustmentRate = 1.0;
-    
-    // 繰上げ（60〜64歳）：1ヶ月あたり0.4%減額
     if (pensionStartAge < 65) {
       const earlyMonths = (65 - pensionStartAge) * 12;
-      adjustmentRate = Math.max(1.0 - (0.004 * earlyMonths), 0.5); // 最低でも50%
+      adjustmentRate = Math.max(1.0 - 0.004 * earlyMonths, 0.5);
+    } else if (pensionStartAge > 65) {
+      const delayedMonths = Math.min((pensionStartAge - 65) * 12, 120);
+      adjustmentRate = 1.0 + 0.007 * delayedMonths;
     }
-    // 繰下げ（66〜75歳）：1ヶ月あたり0.7%増額
-    else if (pensionStartAge > 65) {
-      const delayedMonths = Math.min((pensionStartAge - 65) * 12, 120); // 最大10年=120ヶ月
-      adjustmentRate = 1.0 + (0.007 * delayedMonths);
-    }
-    
-    // 調整後の基礎年金額
+
     const adjustedPension = basicPension * adjustmentRate;
-    
-    // 万円単位に変換し、小数点第一位で四捨五入
-    return Math.round(adjustedPension / 10000 * 10) / 10;
+    return Math.round((adjustedPension / 10000) * 10) / 10;
   }
 
-  // 厚生年金加入者（会社員・公務員など）
-  // 基礎年金の計算
-  const basicPensionYearly = 780900; // 2025年度の基礎年金満額
-  
-  // 加入期間（月数）
-  const workingYears = Math.min(workEndAge - workStartAge, 40); // 上限40年
+  // 厚生年金加入者（簡易）
+  const basicPensionYearly = 780_900; // 円/年
+  const workingYears = Math.min(workEndAge - workStartAge, 40);
   const workingMonths = workingYears * 12;
-  
-  // 加入期間比率（最大480ヶ月=40年で上限）
   const ratio = Math.min(workingMonths / 480, 1);
-  
-  // 基礎年金（満額×加入期間比率）
   const basicPension = basicPensionYearly * ratio;
 
-  // 厚生年金の計算
-  // 平均標準報酬月額の計算（単純化）
-  const averageMonthlySalary = (annualIncome * 10000) / 12; // 年収を月収に変換（円単位）
-  
-  // 標準報酬月額（上限65万円）
-  const standardSalary = Math.min(getStandardRemuneration(averageMonthlySalary), 650000);
-  
-  // 2003年4月以前と以降の期間を考慮
-  // 簡易計算のため、総月数の半分を2003年4月以前、残りを以降として計算
-  const monthsBeforeApril2003 = Math.min(workingMonths / 2, 240); // 最大20年
+  const averageMonthlySalary = (annualIncome * 10000) / 12; // 円
+  const standardSalary = Math.min(getStandardRemuneration(averageMonthlySalary), 650_000);
+
+  // 簡易：半々で前後期に分割
+  const monthsBeforeApril2003 = Math.min(workingMonths / 2, 240);
   const monthsAfterApril2003 = workingMonths - monthsBeforeApril2003;
-  
-  // 2003年3月以前の計算（乗率0.007125）
+
   const pensionBefore2003 = standardSalary * 0.007125 * monthsBeforeApril2003;
-  
-  // 2003年4月以降の計算（乗率0.005481）
   const pensionAfter2003 = standardSalary * 0.005481 * monthsAfterApril2003;
-  
-  // 厚生年金の合計
   const welfarePension = pensionBefore2003 + pensionAfter2003;
-  
-  // 繰上げ・繰下げ調整
+
   let adjustmentRate = 1.0;
-  
-  // 繰上げ（60〜64歳）：1ヶ月あたり0.4%減額
   if (pensionStartAge < 65) {
     const earlyMonths = (65 - pensionStartAge) * 12;
-    adjustmentRate = Math.max(1.0 - (0.004 * earlyMonths), 0.5); // 最低でも50%
+    adjustmentRate = Math.max(1.0 - 0.004 * earlyMonths, 0.5);
+  } else if (pensionStartAge > 65) {
+    const delayedMonths = Math.min((pensionStartAge - 65) * 12, 120);
+    adjustmentRate = 1.0 + 0.007 * delayedMonths;
   }
-  // 繰下げ（66〜75歳）：1ヶ月あたり0.7%増額
-  else if (pensionStartAge > 65) {
-    const delayedMonths = Math.min((pensionStartAge - 65) * 12, 120); // 最大10年=120ヶ月
-    adjustmentRate = 1.0 + (0.007 * delayedMonths);
-  }
-  
-  // 調整後の総年金額
+
   const totalPension = (basicPension + welfarePension) * adjustmentRate;
-  
-  // 在職老齢年金制度による調整（年金受給後も働いている場合）
+
+  // 在職老齢（簡易）
   let adjustedPension = totalPension;
-  
   if (willWorkAfterPension) {
-    // 月収
     const monthlyIncome = averageMonthlySalary;
-    
-    // 月額の年金
     const monthlyPension = totalPension / 12;
-    
-    // 基準額（65歳以上は51万円/月）
-    const threshold = 510000;
-    
-    // 総収入（月収 + 月額年金）
+    const threshold = 510_000;
     const totalMonthlyIncome = monthlyIncome + monthlyPension;
-    
-    // 基準額超過分
-    const excessAmount = Math.max(0, totalMonthlyIncome - threshold);
-    
-    // 支給停止額：超過額の1/2（ただし厚生年金部分のみ対象）
-    const welfareMonthlyPension = welfarePension * adjustmentRate / 12;
-    const suspensionAmount = Math.min(welfareMonthlyPension, excessAmount / 2);
-    
-    // 停止後の月額年金
-    const adjustedMonthlyPension = monthlyPension - suspensionAmount;
-    
-    // 年額に戻す
-    adjustedPension = adjustedMonthlyPension * 12;
+    const excess = Math.max(0, totalMonthlyIncome - threshold);
+    const welfareMonthlyPension = (welfarePension * adjustmentRate) / 12;
+    const suspension = Math.min(welfareMonthlyPension, excess / 2);
+    adjustedPension = (monthlyPension - suspension) * 12;
   }
-  
-  // 万円単位に変換し、小数点第一位で四捨五入
-  return Math.round(adjustedPension / 10000 * 10) / 10;
+
+  return Math.round((adjustedPension / 10000) * 10) / 10;
 }
 
-// 標準報酬月額の取得（厚生年金の計算用）- 修正版
+// 標準報酬月額（簡易表）
 function getStandardRemuneration(monthlySalary: number): number {
-  // 収入が0の場合は0を返す
-  if (monthlySalary <= 0) {
-    return 0;
-  }
-
-  // 標準報酬月額表に基づいて、報酬額を標準報酬月額に変換
+  if (monthlySalary <= 0) return 0;
   const standardGrades = [
     { min: 0, max: 93000, amount: 88000 },
     { min: 93000, max: 101000, amount: 98000 },
@@ -388,29 +330,22 @@ function getStandardRemuneration(monthlySalary: number): number {
     { min: 545000, max: 575000, amount: 560000 },
     { min: 575000, max: 605000, amount: 590000 },
     { min: 605000, max: 635000, amount: 620000 },
-    { min: 635000, max: Infinity, amount: 650000 }
+    { min: 635000, max: Infinity, amount: 650000 },
   ];
-
-  // 対応する標準報酬月額を検索
   const grade = standardGrades.find(g => monthlySalary >= g.min && monthlySalary < g.max);
-  
-  // 該当するグレードが見つからない場合
   if (!grade) {
-    // 最低等級未満の場合は最低等級の金額
-    if (monthlySalary < standardGrades[0].min) {
-      return standardGrades[0].amount;
-    }
-    // 最高等級を超える場合は最高等級の金額
+    if (monthlySalary < standardGrades[0].min) return standardGrades[0].amount;
     return standardGrades[standardGrades.length - 1].amount;
   }
-  
   return grade.amount;
 }
 
+// ---- Income / Cost utilities ----
+
 export function calculateNetIncome(
-  annualIncome: number, // in 万円
+  annualIncome: number, // 万円
   occupation: string
-): { 
+): {
   netIncome: number;
   deductions: {
     salaryDeduction: number;
@@ -420,44 +355,25 @@ export function calculateNetIncome(
     total: number;
   };
 } {
-  // 自営業・フリーランスまたは専業主婦・夫の場合は控除なし
   if (occupation === 'self_employed' || occupation === 'homemaker') {
     return {
       netIncome: annualIncome,
-      deductions: {
-        salaryDeduction: 0,
-        socialInsurance: 0,
-        incomeTax: 0,
-        residentTax: 0,
-        total: 0
-      }
+      deductions: { salaryDeduction: 0, socialInsurance: 0, incomeTax: 0, residentTax: 0, total: 0 },
     };
   }
 
-  // パート（厚生年金なし）の場合は社会保険料なし
-  const hasSocialInsurance = occupation === 'company_employee' || 
-                           occupation === 'part_time_with_pension';
+  const hasSocialInsurance =
+    occupation === 'company_employee' || occupation === 'part_time_with_pension';
 
-  // 給与所得控除 (in 万円)
   const salaryDeduction = calculateSalaryDeduction(annualIncome);
-
-  // 社会保険料（年収に応じて変動）
   const socialInsuranceRate = calculateSocialInsuranceRate(annualIncome);
   const socialInsurance = hasSocialInsurance ? Math.floor(annualIncome * socialInsuranceRate) : 0;
 
-  // 課税所得 (in 万円)
   const taxableIncome = Math.max(0, annualIncome - (salaryDeduction + socialInsurance));
-
-  // 所得税 (in 万円)
   const incomeTax = calculateIncomeTax(taxableIncome);
+  const residentTax = Math.floor(taxableIncome * 0.1);
 
-  // 住民税（課税所得の10%）
-  const residentTax = Math.floor(taxableIncome * 0.10);
-
-  // 総控除額 (in 万円)
   const totalDeductions = socialInsurance + incomeTax + residentTax;
-
-  // 手取り収入 (in 万円)
   const netIncome = annualIncome - totalDeductions;
 
   return {
@@ -467,18 +383,16 @@ export function calculateNetIncome(
       socialInsurance,
       incomeTax,
       residentTax,
-      total: totalDeductions
-    }
+      total: totalDeductions,
+    },
   };
 }
 
-// === 法人給与関連の新規関数 ===
-
-// 役員報酬用の手取り計算（雇用保険を除外）
+// 役員報酬（雇用保険なし）
 export function calculateNetIncomeForDirector(
-  annualIncome: number, // in 万円
+  annualIncome: number, // 万円（額面）
   hasSocialInsurance: boolean
-): { 
+): {
   netIncome: number;
   deductions: {
     salaryDeduction: number;
@@ -488,31 +402,20 @@ export function calculateNetIncomeForDirector(
     total: number;
   };
 } {
-  // 給与所得控除 (in 万円)
   const salaryDeduction = calculateSalaryDeduction(annualIncome);
 
-  // 社会保険料（雇用保険を除いた率で計算）
   let socialInsurance = 0;
   if (hasSocialInsurance) {
-    // 役員の場合、雇用保険を除いた社会保険料率を適用
-    // 通常の15%から雇用保険分(約0.6%)を引いて14.4%とする
+    // 雇用保険を除いた率：14.4%（850万以上は 7.7%）
     const directorSocialInsuranceRate = annualIncome < 850 ? 0.144 : 0.077;
     socialInsurance = Math.floor(annualIncome * directorSocialInsuranceRate);
   }
 
-  // 課税所得 (in 万円)
   const taxableIncome = Math.max(0, annualIncome - (salaryDeduction + socialInsurance));
-
-  // 所得税 (in 万円)
   const incomeTax = calculateIncomeTax(taxableIncome);
+  const residentTax = Math.floor(taxableIncome * 0.1);
 
-  // 住民税（課税所得の10%）
-  const residentTax = Math.floor(taxableIncome * 0.10);
-
-  // 総控除額 (in 万円)
   const totalDeductions = socialInsurance + incomeTax + residentTax;
-
-  // 手取り収入 (in 万円)
   const netIncome = annualIncome - totalDeductions;
 
   return {
@@ -522,48 +425,46 @@ export function calculateNetIncomeForDirector(
       socialInsurance,
       incomeTax,
       residentTax,
-      total: totalDeductions
-    }
+      total: totalDeductions,
+    },
   };
 }
 
-// 法人側の従業員給与コスト計算
+// 法人の従業員コスト
 export function calculateCorporateEmployeeCost(
-  annualSalary: number, // in 万円（額面給与）
+  annualSalary: number,   // 万円（額面）
   hasSocialInsurance: boolean
 ): number {
   let totalCost = annualSalary;
-  
+
   if (hasSocialInsurance) {
-    // 法人負担の社会保険料を計算
-    // 健康保険料 + 厚生年金保険料の法人負担分（労使折半）
+    // 会社負担分（健保+厚年の概算を労使折半相当）：14.4%（850万以上は 7.7%）
     const corporateSocialInsuranceRate = annualSalary < 850 ? 0.144 : 0.077;
     const corporateSocialInsurance = Math.floor(annualSalary * corporateSocialInsuranceRate);
-    
-    // 子ども・子育て拠出金（全額法人負担、0.36%）
+
+    // 子ども・子育て拠出金 0.36%
     const childCareContribution = Math.floor(annualSalary * 0.0036);
-    
-    // 労災保険料（業種により異なるが、一般的な事務業で0.3%程度）
+
+    // 労災保険 0.3%（目安）
     const workAccidentInsurance = Math.floor(annualSalary * 0.003);
-    
-    // 法人の総負担額
+
     totalCost = annualSalary + corporateSocialInsurance + childCareContribution + workAccidentInsurance;
   }
-  
+
   return Math.round(totalCost * 10) / 10;
 }
 
 export function calculateNetIncomeWithRaise(
-  baseAnnualIncome: number, // in 万円
+  baseAnnualIncome: number, // 万円
   occupation: string,
-  raiseRate: number,
+  raiseRate: number,        // %
   year: number,
   startYear: number,
-  workStartAge?: number,
-  workEndAge?: number,
-  currentAge?: number,
-  pensionAmount?: number,
-  pensionStartAge?: number
+  _workStartAge?: number,
+  _workEndAge?: number,
+  _currentAge?: number,
+  _pensionAmount?: number,
+  _pensionStartAge?: number
 ): number {
   const raisedIncome = Math.floor(
     baseAnnualIncome * Math.pow(1 + raiseRate / 100, year - startYear)

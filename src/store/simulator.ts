@@ -1002,25 +1002,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
           if (expense.name === '生活費') {
             livingExpense += amount;
 
-            // ★配偶者追加支出の上乗せ（結婚年以降）
-            const add = basicInfo.spouseInfo?.additionalExpense || 0;
-            if (add > 0 && basicInfo.maritalStatus !== 'single') {
-              let effective = true;
-              if (basicInfo.maritalStatus === 'planning' && basicInfo.spouseInfo?.marriageAge) {
-                const marriageYear =
-                  basicInfo.startYear +
-                  (basicInfo.spouseInfo.marriageAge - basicInfo.currentAge);
-                if (year < marriageYear) effective = false;
-              }
-              if (effective) {
-                const yearsSinceStart = year - basicInfo.startYear;
-                const inflationFactor = Math.pow(
-                  1 + (parameters.inflationRate || 0) / 100,
-                  yearsSinceStart
-                );
-                livingExpense += Math.round(add * inflationFactor * 10) / 10;
-              }
-            }
+            
           } else if (expense.name === '住居費') {
             housingExpense += amount;
           } else if (expense.name === '教育費') {
@@ -1453,14 +1435,41 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
     years.forEach((year) => {
       const yearsSinceStart = year - basicInfo.startYear;
 
-      const living = newExpenseData.personal.find((i) => i.name === '生活費');
-      if (living) {
-        const baseAmount = basicInfo.monthlyLivingExpense * 12;
-        const infl = Math.pow(1 + (parameters.inflationRate || 0) / 100, yearsSinceStart);
-        const inflated = Math.round(baseAmount * infl * 10) / 10;
-        living._rawAmounts = { ...(living._rawAmounts || {}), [year]: baseAmount };
-        living.amounts[year] = inflated;
-      }
+    // ===== 生活費（ベース＋配偶者追加を startYear 基準で年次展開）=====
+const living = newExpenseData.personal.find((i) => i.name === '生活費');
+if (living) {
+  const yearsSinceStart = year - basicInfo.startYear;
+
+  // 1) ベース（月額 → 年額）
+  const baseAnnual = (basicInfo.monthlyLivingExpense || 0) * 12;
+
+  // 2) 配偶者追加（月額 → 年額）。結婚状態＆結婚年を判定
+  const extraMonthly = basicInfo.spouseInfo?.additionalExpense || 0;
+  let extraAnnual = 0;
+
+  if (extraMonthly > 0 && basicInfo.maritalStatus !== 'single') {
+    let effective = true;
+    if (basicInfo.maritalStatus === 'planning' && basicInfo.spouseInfo?.marriageAge) {
+      const marriageYear =
+        basicInfo.startYear + (basicInfo.spouseInfo.marriageAge - basicInfo.currentAge);
+      if (year < marriageYear) effective = false; // 結婚前は0
+    }
+    if (effective) {
+      extraAnnual = extraMonthly * 12; // ★月額→年額に変換して足す
+    }
+  }
+
+  // 3) 生活費カテゴリにはインフレ適用
+  const infl = Math.pow(1 + (parameters.inflationRate || 0) / 100, yearsSinceStart);
+
+  // 4) _rawAmounts ＝ ベース＋配偶者追加の“生”の年額（インフレ前）
+  const raw = baseAnnual + extraAnnual;
+  living._rawAmounts = { ...(living._rawAmounts || {}), [year]: raw };
+
+  // 5) amounts はインフレ適用後を表示
+  living.amounts[year] = Math.round(raw * infl * 10) / 10;
+}
+
 
       const housing = newExpenseData.personal.find((i) => i.name === '住居費');
       if (housing) {
